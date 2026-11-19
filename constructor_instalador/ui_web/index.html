@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cinema Reservas</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body class="h-screen overflow-hidden font-sans text-[14px] antialiased select-none">
+  <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div class="grid-bg" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <div class="relative z-10 flex h-full flex-col">
+    <header class="pywebview-drag-region flex h-12 shrink-0 items-center justify-between pr-2 pl-4">
+      <div class="pointer-events-none flex items-center gap-2.5">
+        <img src="logo.png" alt="" class="size-6 rounded-md">
+        <span class="text-[13px] font-medium text-fg/85">Cinema Reservas</span>
+        <span id="crumb" class="text-[13px] text-subtle"></span>
+      </div>
+      <div class="win-ctrl flex items-center gap-1">
+        <button class="win-btn" data-act="minimize" title="Minimizar" aria-label="Minimizar"></button>
+        <button class="win-btn is-close" data-act="close" title="Cerrar" aria-label="Cerrar"></button>
+        <span class="mac-zoom" aria-hidden="true"></span>
+      </div>
+    </header>
+    <main id="app" class="min-h-0 flex-1"></main>
+  </div>
+
+<script>
+"use strict";
+// En Mac los botones de ventana van a la izquierda, como semaforo (rojo / amarillo / gris)
+const IS_MAC = /Mac/i.test(navigator.platform || navigator.userAgent);
+if (IS_MAC) document.documentElement.classList.add("is-mac");
+// ── iconos (lucide) ───────────────────────────────────────────────
+const I = {
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  minus: '<path d="M5 12h14"/>',
+  loader: '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>',
+  key: '<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  cart: '<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/>',
+  terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>',
+  wifiOff: '<path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/>',
+  drive: '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
+  calendar: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/>',
+  infinity: '<path d="M6 16c5 0 7-8 12-8a4 4 0 0 1 0 8c-5 0-7-8-12-8a4 4 0 1 0 0 8"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  alert: '<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+  retry: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
+  arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
+  back: '<path d="m15 18-6-6 6-6"/>',
+  sparkles: '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>',
+  folder: '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+};
+const ic = (n, c = "size-4") =>
+  `<svg class="${c} shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
+const spin = (c = "size-4") => ic("loader", c + " animate-spin");
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const hasApi = () => !!(window.pywebview && window.pywebview.api);
+async function call(name, ...args) {
+  if (!hasApi()) { console.info("[demo] api." + name, args); return DEMO[name] ? DEMO[name](...args) : null; }
+  try { return await window.pywebview.api[name](...args); } catch (e) { console.error(e); return null; }
+}
+
+document.querySelector('[data-act="minimize"]').innerHTML = ic("minus");
+document.querySelector('[data-act="close"]').innerHTML = ic("x");
+document.querySelector('[data-act="minimize"]').onclick = () => call("minimize");
+document.querySelector('[data-act="close"]').onclick = () => (views[current]?.onClose ? views[current].onClose() : call("close"));
+
+function setAlert(el, kind, text) {
+  if (!text) { el.innerHTML = ""; el.hidden = true; return; }
+  const icon = { error: ic("alert", "size-4 mt-0.5"), success: ic("check", "size-4 mt-0.5"), info: spin("size-4 mt-0.5") }[kind] || "";
+  el.hidden = false;
+  el.className = "alert alert-" + kind;
+  el.innerHTML = icon + `<span class="min-w-0 break-words">${esc(text)}</span>`;
+}
+
+// ══ vistas ══════════════════════════════════════════════════════
+const views = {};
+let current = null;
+let S = {};
+
+// ── INSTALADOR ──────────────────────────────────────────────────
+views.setup = {
+  crumb: "Instalador",
+  phase: "ready", step: -1, pct: 0,
+  html: (s) => `
+  <section class="view-enter flex h-full flex-col px-8 pb-5">
+    <div>
+      <div class="flex flex-wrap gap-2">
+        <span class="badge text-fg/90">${ic("sparkles", "size-3.5 text-brand")} v${esc(s.version)}</span>
+        <span class="badge">${ic("shield", "size-3.5")} Sin permisos de administrador</span>
+        <span class="badge">${ic("wifiOff", "size-3.5")} No necesita internet</span>
+      </div>
+      <h1 class="mt-4 font-display text-[40px] leading-[1.05] font-semibold tracking-[-0.035em]">
+        Instalar <span class="text-gradient">Cinema Reservas</span></h1>
+      <p class="mt-2 text-[15px] text-muted">Gestor de reservas de eventos, 100% local en tu PC. Todo incluido.</p>
+    </div>
+
+    <div class="mt-6 grid min-h-0 flex-1 grid-cols-5 gap-4">
+      <div class="card col-span-2 p-4">
+        <p class="label-caps px-2.5 pt-1">Pasos</p>
+        <ol id="steps" class="mt-2.5 space-y-0.5"></ol>
+      </div>
+
+      <div class="card relative col-span-3 flex min-h-0 flex-col p-6">
+        <div id="pane-main" class="flex min-h-0 flex-1 flex-col">
+          <div class="flex items-start justify-between gap-4">
+            <h2 id="st-title" class="font-display text-[22px] font-semibold tracking-tight">Todo listo para instalar</h2>
+            <span id="st-pct" class="mt-1.5 font-mono text-sm text-muted tabular-nums">0%</span>
+          </div>
+          <div class="progress mt-4"><div id="st-bar" class="progress-fill is-idle"></div></div>
+          <p id="st-desc" class="mt-4 text-sm leading-relaxed text-muted">
+            Se instala en tu usuario con Python y todas las librerías incluidas. Tus reservas y respaldos
+            se conservan si ya tenías una instalación.</p>
+          <div id="st-alert" hidden></div>
+          <div class="mt-auto flex items-center gap-2 pt-5">
+            <button id="st-primary" class="btn btn-primary h-11 flex-1 text-[15px]">Instalar ${ic("arrow")}</button>
+            <button id="st-log-open" class="btn btn-ghost h-11">${ic("terminal")} Detalles</button>
+          </div>
+        </div>
+        <div id="pane-log" hidden class="flex min-h-0 flex-1 flex-col">
+          <div class="flex items-center justify-between">
+            <p class="label-caps">Registro de instalación</p>
+            <button id="st-log-close" class="btn btn-ghost -mr-2 h-8 px-2.5 text-xs">${ic("back", "size-3.5")} Volver</button>
+          </div>
+          <pre id="st-log" class="mt-3 min-h-0 flex-1 overflow-auto rounded-xl border border-line bg-black/40 p-3.5 font-mono text-[12px] leading-relaxed whitespace-pre-wrap text-muted select-text"></pre>
+        </div>
+      </div>
+    </div>
+
+    <footer class="mt-4 flex items-center justify-between text-xs text-subtle">
+      <span class="flex min-w-0 items-center gap-1.5">${ic("folder", "size-3.5")}<span class="truncate font-mono">${esc(s.path)}</span></span>
+      <span class="shrink-0 pl-4 whitespace-nowrap">Cinema Productions</span>
+    </footer>
+  </section>`,
+
+  mount(s) {
+    this.steps = s.steps || [];
+    this.renderSteps();
+    $("#st-primary").onclick = () => this.primary();
+    $("#st-log-open").onclick = () => this.showLog(true);
+    $("#st-log-close").onclick = () => this.showLog(false);
+  },
+  onClose() { if (this.phase !== "installing") call("close"); },
+  showLog(on) { $("#pane-log").hidden = !on; $("#pane-main").hidden = on; if (on) { const l = $("#st-log"); l.scrollTop = l.scrollHeight; } },
+
+  renderSteps() {
+    const done = this.phase === "done";
+    $("#steps").innerHTML = this.steps.map((t, i) => {
+      const [name, hint] = t.split(" (");
+      const state = done || i < this.step ? "done" : i === this.step ? "active" : "todo";
+      const dot = {
+        done: `<span class="grid size-6 place-items-center rounded-full bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30">${ic("check", "size-3.5")}</span>`,
+        active: `<span class="grid size-6 place-items-center rounded-full bg-brand/15 text-brand ring-1 ring-brand/40">${spin("size-3.5")}</span>`,
+        todo: `<span class="grid size-6 place-items-center rounded-full text-[11px] font-medium text-subtle ring-1 ring-white/12">${i + 1}</span>`,
+      }[state];
+      const row = { done: "text-fg/80", active: "bg-white/[0.05] text-fg", todo: "text-subtle" }[state];
+      return `<li class="flex h-10 items-center gap-3 rounded-lg px-2.5 transition-colors duration-300 ${row}">${dot}
+        <span class="min-w-0 truncate text-[13.5px]">${esc(name)}${hint ? `<span class="text-subtle"> · ${esc(hint.replace(")", ""))}</span>` : ""}</span></li>`;
+    }).join("");
+  },
+
+  setPct(v) {
+    this.pct = v;
+    $("#st-bar").style.width = v + "%";
+    $("#st-pct").textContent = Math.round(v) + "%";
+  },
+
+  primary() {
+    if (this.phase === "done") { call("open_app"); return; }
+    if (this.phase === "installing") return;
+    this.set({ phase: "installing" });
+    call("install");
+  },
+
+  set(p) {
+    if (p.log != null) {
+      const l = $("#st-log");
+      const stick = l.scrollTop + l.clientHeight >= l.scrollHeight - 8;
+      l.textContent += p.log + "\n";
+      if (stick) l.scrollTop = l.scrollHeight;
+    }
+    if (typeof p.pct === "number") this.setPct(p.pct);
+    if (typeof p.step === "number") {
+      this.step = p.step;
+      $("#st-title").textContent = (this.steps[p.step] || "").split(" (")[0] + "…";
+      this.renderSteps();
+    }
+    if (p.phase) {
+      this.phase = p.phase;
+      const btn = $("#st-primary"), bar = $("#st-bar"), title = $("#st-title"), desc = $("#st-desc");
+      bar.className = "progress-fill" + (p.phase === "done" ? " is-done" : p.phase === "error" ? " is-error" : "");
+      setAlert($("#st-alert"), "", "");
+      if (p.phase === "installing") {
+        btn.disabled = true; btn.innerHTML = spin() + " Instalando…";
+        title.textContent = "Preparando la instalación…";
+        desc.textContent = "No cierres esta ventana. Tarda menos de un minuto.";
+        if (this.pct >= 100) this.setPct(0);
+      } else if (p.phase === "done") {
+        this.setPct(100); this.renderSteps();
+        btn.disabled = false; btn.innerHTML = "Abrir Cinema Reservas " + ic("arrow");
+        title.textContent = "¡Instalación completa!";
+        desc.textContent = "Cinema Reservas ya está en tu escritorio y en el menú Inicio. Al abrirlo por primera vez te pedirá activar tu licencia.";
+      } else if (p.phase === "error") {
+        btn.disabled = false; btn.innerHTML = ic("retry") + " Reintentar";
+        title.textContent = "No se pudo instalar";
+        desc.textContent = "Revisa «Detalles» para ver qué pasó y vuelve a intentarlo.";
+        setAlert($("#st-alert"), "error", p.error || "Error desconocido");
+        $("#st-alert").classList.add("mt-4");
+      }
+    }
+  },
+};
+
+// ── LICENCIA ────────────────────────────────────────────────────
+views.license = {
+  crumb: "Licencia",
+  html: (s) => `
+  <section class="grid h-full grid-cols-[340px_1fr]">
+    <aside class="view-enter relative m-3 mt-0 flex flex-col overflow-hidden rounded-2xl border border-line p-7"
+           style="background:linear-gradient(160deg,rgb(124 58 237/.30),rgb(76 29 149/.18) 45%,rgb(247 198 168/.10))">
+      <div class="relative size-16">
+        <div class="logo-glow"></div>
+        <img src="logo.png" alt="" class="relative size-16 animate-float rounded-2xl">
+      </div>
+      <div class="mt-6">
+        <h2 class="font-display text-2xl font-semibold tracking-tight">Cinema Reservas</h2>
+        <p class="mt-1 text-sm text-muted">Licencia · v${esc(s.version || "1.0")}</p>
+      </div>
+      <ul class="mt-7 space-y-3.5 text-[13.5px] text-fg/85">
+        <li class="flex items-center gap-3"><span class="grid size-8 place-items-center rounded-lg bg-white/[.06] ring-1 ring-white/10">${ic("calendar", "size-4 text-brand")}</span>Reservas de eventos ilimitadas</li>
+        <li class="flex items-center gap-3"><span class="grid size-8 place-items-center rounded-lg bg-white/[.06] ring-1 ring-white/10">${ic("infinity", "size-4 text-brand")}</span>Licencia perpetua, sin mensualidades</li>
+        <li class="flex items-center gap-3"><span class="grid size-8 place-items-center rounded-lg bg-white/[.06] ring-1 ring-white/10">${ic("drive", "size-4 text-brand")}</span>Datos 100% locales con respaldos</li>
+      </ul>
+      <div class="mt-auto">
+        <p class="label-caps">ID del equipo</p>
+        <div class="mt-2 flex items-center justify-between gap-2 rounded-xl border border-line bg-black/30 py-1.5 pr-1.5 pl-3.5">
+          <span class="kbd-id select-text">${esc(s.machineId)}</span>
+          <button id="lic-copy" class="btn btn-ghost h-8 px-2 text-xs" title="Copiar ID del equipo" aria-label="Copiar ID del equipo">${ic("copy", "size-3.5")}</button>
+        </div>
+      </div>
+    </aside>
+
+    <div class="view-enter flex flex-col px-10 pt-6 pb-8">
+      <div>
+        <h1 class="font-display text-[34px] leading-tight font-semibold tracking-[-0.03em]">Activa tu licencia</h1>
+        <p class="mt-2 max-w-md text-[15px] leading-relaxed text-muted">Pega la clave que te llegó por correo al comprar. Se activa en esta computadora en segundos.</p>
+      </div>
+      <form id="lic-form" class="mt-8" autocomplete="off" novalidate>
+        <label for="lic-key" class="text-sm font-medium text-fg/90">Clave de licencia</label>
+        <div class="relative mt-2">
+          <span class="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-subtle">${ic("key")}</span>
+          <input id="lic-key" class="input h-12 pl-11 font-mono text-[14px] tracking-wide" spellcheck="false"
+                 placeholder="XXXXXXXX-XXXXXXXX-XXXXXXXX-XXXXXXXX" aria-describedby="lic-msg">
+        </div>
+        <button id="lic-go" type="submit" class="btn btn-primary mt-3 h-12 w-full text-[15px]">Activar licencia ${ic("arrow")}</button>
+        <div id="lic-msg" role="status" aria-live="polite" class="mt-3" hidden></div>
+      </form>
+      <div class="mt-auto border-t border-line pt-5">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">¿Aún no tienes licencia?</p>
+            <p class="mt-0.5 text-xs text-subtle">La clave te llega por correo al comprar en Gumroad.</p>
+          </div>
+          <button id="lic-buy" class="btn btn-outline h-10">${ic("cart")} Comprar licencia</button>
+        </div>
+      </div>
+    </div>
+  </section>`,
+
+  mount(s) {
+    const key = $("#lic-key"), msg = $("#lic-msg");
+    if (s.reason) setAlert(msg, "error", s.reason);
+    setTimeout(() => key.focus(), 350);
+    $("#lic-buy").onclick = () => call("buy");
+    $("#lic-copy").onclick = async () => {
+      try { await navigator.clipboard.writeText(s.machineId); } catch { await call("copy", s.machineId); }
+      const b = $("#lic-copy"); b.innerHTML = ic("check", "size-3.5 text-emerald-400");
+      setTimeout(() => (b.innerHTML = ic("copy", "size-3.5")), 1600);
+    };
+    $("#lic-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const k = key.value.trim();
+      if (!k) { setAlert(msg, "error", "Escribe o pega tu clave de licencia."); key.focus(); return; }
+      const go = $("#lic-go");
+      key.disabled = go.disabled = true;
+      go.innerHTML = spin() + " Verificando…";
+      setAlert(msg, "info", "Verificando licencia…");
+      const r = await call("activate", k);
+      if (r && r.ok) {
+        go.innerHTML = ic("check") + " Activada";
+        setAlert(msg, "success", r.master ? "Licencia maestra activada. Bienvenido." : "Licencia activada. ¡Gracias por tu compra!");
+        await sleep(1100);
+        show("splash", S);
+      } else {
+        key.disabled = go.disabled = false;
+        go.innerHTML = "Activar licencia " + ic("arrow");
+        setAlert(msg, "error", (r && r.reason) || "No se pudo activar.");
+        key.focus(); key.select();
+      }
+    };
+  },
+};
+
+// ── ARRANQUE ────────────────────────────────────────────────────
+views.splash = {
+  crumb: "",
+  html: () => `
+  <section class="view-enter flex h-full flex-col items-center justify-center px-10 pb-12 text-center">
+    <div class="relative size-20">
+      <div class="logo-glow"></div>
+      <img src="logo.png" alt="" class="relative size-20 animate-float rounded-[22px]">
+    </div>
+    <h1 class="mt-7 font-display text-[26px] font-semibold tracking-[-0.025em]">Cinema Reservas</h1>
+    <p id="sp-title" class="mt-1.5 flex h-5 items-center gap-2 text-sm text-muted">Iniciando…</p>
+    <div class="progress mt-6 w-72"><div id="sp-bar" class="progress-fill"></div></div>
+    <p id="sp-detail" class="mt-3 h-4 max-w-md truncate font-mono text-xs text-subtle"></p>
+    <pre id="sp-error" hidden class="mt-4 max-h-28 w-full max-w-lg overflow-auto rounded-xl border border-red-500/20 bg-red-500/[.06] p-3 text-left font-mono text-[11.5px] whitespace-pre-wrap text-red-300/90 select-text"></pre>
+    <button id="sp-retry" hidden class="btn btn-primary mt-5 h-10">${ic("retry")} Reintentar</button>
+  </section>`,
+  mount() { $("#sp-retry").onclick = () => this.start(); this.start(); },
+  start() {
+    $("#sp-retry").hidden = true; $("#sp-error").hidden = true;
+    const t = $("#sp-title"); t.className = "mt-1.5 flex h-5 items-center gap-2 text-sm text-muted"; t.textContent = "Preparando…";
+    const bar = $("#sp-bar"); bar.className = "progress-fill"; bar.style.width = "20%";
+    $("#sp-detail").textContent = "";
+    call("start");
+  },
+  set(p) {
+    const t = $("#sp-title"), bar = $("#sp-bar");
+    if (typeof p.pct === "number" && p.pct >= 0) bar.style.width = Math.min(100, p.pct) + "%";
+    if (p.failed) {
+      bar.className = "progress-fill is-error"; bar.style.width = "100%";
+      t.className = "mt-1.5 flex h-5 items-center gap-2 text-sm font-medium text-red-300";
+      t.innerHTML = ic("alert") + `<span>${esc(p.title)}</span>`;
+      $("#sp-detail").textContent = "";
+      const e = $("#sp-error"); e.textContent = p.detail || ""; e.hidden = !p.detail;
+      $("#sp-retry").hidden = false;
+      return;
+    }
+    if (p.done) {
+      bar.className = "progress-fill is-done"; bar.style.width = "100%";
+      t.className = "mt-1.5 flex h-5 items-center gap-2 text-sm font-medium text-emerald-300";
+      t.innerHTML = ic("check") + "<span>Cinema Reservas está corriendo</span>";
+      $("#sp-detail").textContent = "Abriendo la ventana de la app…";
+      return;
+    }
+    if (p.title) t.textContent = p.title;
+    if (p.detail != null) $("#sp-detail").textContent = p.detail;
+  },
+};
+
+// ── DESINSTALAR ─────────────────────────────────────────────────
+views.uninstall = {
+  crumb: "Desinstalar",
+  busy: false,
+  html: () => `
+  <section id="un" class="view-enter flex h-full flex-col px-8 pt-3 pb-7">
+    <div class="grid size-12 place-items-center rounded-2xl bg-red-500/10 text-red-400 ring-1 ring-red-500/25">${ic("trash", "size-5")}</div>
+    <h1 class="mt-5 font-display text-[26px] font-semibold tracking-[-0.025em]">¿Desinstalar Cinema Reservas?</h1>
+    <p class="mt-2 text-sm leading-relaxed text-muted">Puedes conservar tus reservas y respaldos (carpeta <span class="font-mono text-fg/80">app</span>) por si lo vuelves a instalar más adelante.</p>
+    <div class="mt-auto space-y-2">
+      <button data-mode="keep" class="btn btn-primary h-11 w-full">Desinstalar y conservar mis datos</button>
+      <button data-mode="wipe" class="btn btn-destructive h-11 w-full">Desinstalar todo, incluidos mis datos</button>
+      <button data-mode="cancel" class="btn btn-ghost h-10 w-full">Cancelar</button>
+    </div>
+  </section>`,
+  mount() {
+    document.querySelectorAll("#un [data-mode]").forEach((b) => (b.onclick = () => this.go(b.dataset.mode, b)));
+  },
+  onClose() { if (!this.busy) call("close"); },
+  async go(mode, btn) {
+    if (mode === "cancel") return call("close");
+    this.busy = true;
+    document.querySelectorAll("#un [data-mode]").forEach((b) => (b.disabled = true));
+    btn.innerHTML = spin() + " Desinstalando…";
+    const ok = await call("uninstall", mode);
+    this.busy = false;
+    $("#app").innerHTML = `
+    <section class="view-enter flex h-full flex-col items-center justify-center px-8 pb-10 text-center">
+      <div class="grid size-14 place-items-center rounded-full ${ok ? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30" : "bg-red-500/10 text-red-400 ring-red-500/25"} ring-1">${ic(ok ? "check" : "alert", "size-6")}</div>
+      <h1 class="mt-5 font-display text-2xl font-semibold tracking-tight">${ok ? "Cinema Reservas se desinstaló" : "No se pudo desinstalar"}</h1>
+      <p class="mt-2 text-sm text-muted">${ok ? (mode === "keep" ? "Tus datos se conservaron. Esta ventana se cierra sola." : "Se borró todo. Esta ventana se cierra sola.") : "Cierra Cinema Reservas e inténtalo de nuevo."}</p>
+    </section>`;
+  },
+};
+
+// ══ motor de vistas ═════════════════════════════════════════════
+function show(name, state) {
+  S = state || S;
+  current = name;
+  const v = views[name];
+  $("#crumb").textContent = v.crumb ? "· " + v.crumb : "";
+  $("#app").innerHTML = v.html(S);
+  v.mount && v.mount(S);
+}
+window.ui = {
+  set(p) {
+    if (p.view && p.view !== current) return show(p.view, Object.assign(S, p));
+    views[current] && views[current].set && views[current].set(p);
+  },
+};
+
+// Datos de ejemplo para ver el diseño en un navegador normal (sin pywebview).
+const DEMO = {
+  init: () => ({ view: new URLSearchParams(location.hash.slice(1)).get("view") || new URLSearchParams(location.search).get("view") || "setup", version: "1.20.84",
+    path: "C:\\Users\\Cliente\\AppData\\Local\\CinemaProductions", machineId: "8F3A-21C9-77DE-0B54", reason: "",
+    steps: ["Carpetas (en tu usuario, sin admin)", "Programa Cinema Reservas", "Python y dependencias (motor)",
+            "Base de datos local", "Acceso directo y desinstalador", "Precalentar el motor"] }),
+  activate: async (k) => { await sleep(900); return /^cinema-?productions$/i.test(k) ? { ok: true, master: true } : { ok: false, reason: "Clave no valida. Revisa que este completa y sea de Cinema Reservas." }; },
+  install: async () => { for (let i = 0; i < 6; i++) { ui.set({ step: i, log: "Paso " + (i + 1) }); for (let j = 0; j < 8; j++) { await sleep(120); ui.set({ pct: (i * 8 + j + 1) / 48 * 100 }); } } ui.set({ phase: "done" }); },
+  start: async () => { for (let i = 0; i < 10; i++) { await sleep(200); ui.set({ pct: 20 + i * 8, title: "Iniciando servidor…", detail: "esperando servidor (" + (i + 1) + "s)" }); } ui.set({ done: true }); },
+  uninstall: async () => { await sleep(800); return true; },
+};
+
+let booted = false;
+async function boot() {
+  if (booted) return; booted = true;
+  const s = (await call("init")) || DEMO.init();
+  show(s.view || "setup", s);
+}
+window.addEventListener("pywebviewready", boot);
+if (new URLSearchParams(location.hash.slice(1)).has("pw")) {        // dentro de la app: esperar a la API
+  const t = setInterval(() => { if (hasApi()) { clearInterval(t); boot(); } }, 100);
+} else {
+  setTimeout(() => { if (!hasApi()) boot(); }, 300);         // navegador normal: modo demo
+}
+</script>
+</body>
+</html>

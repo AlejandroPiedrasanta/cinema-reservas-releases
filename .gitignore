@@ -1,0 +1,23 @@
+# datos y secretos: nunca al repo
+.env
+*.env
+cinema_data.json
+backups/
+uploads/
+logs/
+ssl/
+license.json
+server_log.txt
+error_log.txt
+
+# compilacion
+__pycache__/
+*.pyc
+constructor_instalador/_build/
+constructor_instalador/_tailwind/
+constructor_instalador/python-embed/
+constructor_instalador_mac/build/
+constructor_instalador_mac/dist/
+node_modules/
+*.dmg
+*.exe
