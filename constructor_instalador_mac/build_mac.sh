@@ -45,15 +45,25 @@ pset CFBundleShortVersionString "$VER" string
 pset CFBundleVersion "$VER" string
 pset NSHumanReadableCopyright "© $(date +%Y) Cinema Productions" string
 pset LSApplicationCategoryType "public.app-category.business" string
-# Sistema minimo REAL: la version de macOS mas alta que exigen las piezas incluidas
-# (sin contar Qt, que es solo la interfaz de respaldo). Asi un Mac demasiado viejo ve el
-# aviso normal de macOS en vez de una app que no abre.
-MINOS=$(find "dist/$APP" -type f \( -name "*.so" -o -name "*.dylib" -o -perm -u+x \) ! -path "*PySide6*" ! -path "*/Qt*" -print0 \
-  | xargs -0 -n1 otool -l 2>/dev/null \
-  | awk '/LC_BUILD_VERSION/{b=1} b&&/ minos /{print $2; b=0} /LC_VERSION_MIN_MACOSX/{v=1} v&&/ version /{print $2; v=0}' \
-  | sort -t. -k1,1n -k2,2n | tail -1)
+# Sistema minimo: lo decide el ejecutable principal y el Python incluido (lo que macOS
+# carga al abrir la app). Algunas librerias traen marcada una version muy nueva aunque
+# funcionan en sistemas anteriores, por eso NO se usan para decidir; solo se informan.
+minos_of() { otool -l "$1" 2>/dev/null | awk '/LC_BUILD_VERSION/{b=1} b&&/ minos /{print $2; b=0} /LC_VERSION_MIN_MACOSX/{v=1} v&&/ version /{print $2; v=0}' | sort -t. -k1,1n -k2,2n | tail -1; }
+CORE=("dist/$APP/Contents/MacOS/CinemaReservas")
+while IFS= read -r f; do CORE+=("$f"); done < <(find "dist/$APP" -type f \( -name "Python" -o -name "libpython3*.dylib" \) 2>/dev/null)
+MINOS=""
+for f in "${CORE[@]}"; do
+  m=$(minos_of "$f"); [ -z "$m" ] && continue
+  echo "   minimo de $(basename "$f"): $m"
+  MINOS=$(printf '%s\n%s\n' "$MINOS" "$m" | sed '/^$/d' | sort -t. -k1,1n -k2,2n | tail -1)
+done
 MINOS=${MINOS:-11.0}
-echo "   macOS minimo requerido por la app: $MINOS"
+case "$MINOS" in 1[0-5]|1[0-5].*) ;; *) echo "   (valor raro: $MINOS, se usa 11.0)"; MINOS=11.0 ;; esac
+echo "   macOS minimo de la app: $MINOS"
+echo "   librerias marcadas con version alta (solo informativo):"
+find "dist/$APP" -type f \( -name "*.so" -o -name "*.dylib" \) -print0 | while IFS= read -r -d '' f; do
+  m=$(minos_of "$f"); case "$m" in 1[6-9]*|2*) echo "     $m  ${f#dist/}";; esac
+done | head -10
 pset LSMinimumSystemVersion "$MINOS" string
 pset NSHighResolutionCapable true bool
 

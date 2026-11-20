@@ -1939,7 +1939,8 @@ export default function DatabasePage() {
 
 
         {/* ── GITHUB & CONTEXTO IA ── */}
-        <motion.div variants={fadeUp} style={{ display: advancedMode ? undefined : "none" }} data-testid="db-advanced-block-github">
+        {/* «Soporte avanzado» quitado de la vista (herramientas internas) */}
+        <motion.div variants={fadeUp} style={{ display: "none" }} data-testid="db-advanced-block-github">
           <div className={`glass rounded-3xl overflow-hidden transition-all duration-300 ${ghConfig.repo_url ? "ring-2 ring-slate-800/30" : ""}`}
             style={{ background: ghConfig.repo_url ? "linear-gradient(135deg,rgba(30,41,59,0.05),rgba(15,23,42,0.03))" : undefined }}>
 
