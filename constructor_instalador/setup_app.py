@@ -116,6 +116,12 @@ def close_splash() -> None:
         pass
 
 
+def _app_env() -> dict:
+    """Entorno para abrir la app al terminar: sin variables de prueba heredadas (si el
+    instalador lo lanzo una app con CP_TEST_LOCAL_VERSION, la app nueva no debe creerse vieja)."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("CP_TEST_")}
+
+
 def _q(v) -> str:
     """Texto literal de PowerShell (aguanta apostrofes en rutas, p. ej. C:\\Users\\O'Brien)."""
     return "'" + str(v).replace("'", "''") + "'"
@@ -398,7 +404,7 @@ class SetupApi:
         return True
 
     def open_app(self):
-        subprocess.Popen([str(self._target / EXE_NAME)], cwd=str(self._target),
+        subprocess.Popen([str(self._target / EXE_NAME)], cwd=str(self._target), env=_app_env(),
                          creationflags=NO_WINDOW | 0x00000008)
         self._win.close()
 
@@ -577,7 +583,7 @@ class SetupWindow(Frameless):
     def _on_button(self):
         if self.done:
             exe = self.target / EXE_NAME
-            subprocess.Popen([str(exe)], cwd=str(self.target), creationflags=NO_WINDOW | 0x00000008)
+            subprocess.Popen([str(exe)], cwd=str(self.target), env=_app_env(), creationflags=NO_WINDOW | 0x00000008)
             self.close()
             return
         if self.worker is not None:
