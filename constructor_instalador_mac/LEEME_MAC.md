@@ -59,3 +59,7 @@ Para evitarlo hay que firmar y notarizar: guarda el certificado "Developer ID Ap
 | `../.github/workflows/build-mac.yml` | Fabrica los DMG en GitHub (Apple Silicon + Intel) |
 
 Comparte con Windows: `app_servidor/` (app + `license_core.py`) y `constructor_instalador/`: interfaz web `ui_web/` + `webui.py` + `web_launcher.py` (licencia, arranque, ventana de la app) y, como respaldo si fallara, la interfaz Qt (`ui_common.py`, `license_ui.py`).
+
+## Prueba automatica en Mac
+
+El workflow «Instalador macOS» del repo publico cinema-reservas-releases fabrica los dos .dmg en Macs reales de GitHub (macos-15 y macos-15-intel), abre la app con `--uitest` (licencia -> arranque -> ventana de la app -> cerrar, con capturas) y solo adjunta los .dmg al release si la prueba pasa. Las capturas quedan en el run, en «Artifacts».
