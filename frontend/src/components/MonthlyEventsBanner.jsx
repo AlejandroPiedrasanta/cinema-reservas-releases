@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CalendarDays, Sparkles, Zap, ArrowRight, Flame, Plus, ChevronDown, CalendarClock } from "lucide-react";
 import { getEventConfig } from "@/lib/eventConfig";
+import { localDate } from "@/lib/apiMsg";
 
 /**
  * Big animated hero banner replacing the 4 stat cards.
@@ -61,7 +62,10 @@ export default function MonthlyEventsBanner({
   onEventClick,
 }) {
   const monthCount = monthEvents.length;
-  const nextEvent = monthEvents[0]; // already sorted asc
+  // primer evento del mes DE HOY EN ADELANTE (antes tomaba el primero del mes aunque ya
+  // hubiera pasado, y mostraba "Un evento es HOY")
+  const todayStr = localDate();
+  const nextEvent = monthEvents.find(e => (e.event_date || "") >= todayStr) || null; // ya vienen en orden
   const pendingCount = pendingEvents.length;
   const [upcomingOpen, setUpcomingOpen] = useState(false);
 
