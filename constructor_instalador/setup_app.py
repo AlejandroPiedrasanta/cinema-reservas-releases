@@ -57,6 +57,11 @@ def _version() -> str:
         return "1.0.0"
 
 
+def _q(v) -> str:
+    """Texto literal de PowerShell (aguanta apostrofes en rutas, p. ej. C:\\Users\\O'Brien)."""
+    return "'" + str(v).replace("'", "''") + "'"
+
+
 def _run(cmd, **kw):
     return subprocess.run(cmd, creationflags=NO_WINDOW, capture_output=True, text=True,
                           errors="ignore", **kw)
@@ -104,8 +109,9 @@ class InstallJob:
             self.log("Instalando en %s" % t)
             # cierra solo los procesos que corren desde la carpeta de instalacion
             _run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
-                  "Get-Process | Where-Object { $_.Path -like '%s\\*' -and $_.Id -ne %d } "
-                  "| Stop-Process -Force -ErrorAction SilentlyContinue" % (t, os.getpid())])
+                  "$h=%s;Get-Process | Where-Object { $_.Path -and $_.Id -ne %d -and "
+                  "$_.Path.StartsWith($h,[StringComparison]::OrdinalIgnoreCase) } "
+                  "| Stop-Process -Force -ErrorAction SilentlyContinue" % (_q(str(t) + "\\"), os.getpid())])
             time.sleep(0.6)
             self._migrate_old(t)
             for d in ("", "app", "python"):
@@ -226,9 +232,9 @@ class InstallJob:
                  (start / "Desinstalar Cinema Reservas.lnk", "--uninstall", "Desinstalar")]
         ps = ["$s=New-Object -ComObject WScript.Shell"]
         for p, args, desc in links:
-            ps.append("$l=$s.CreateShortcut('%s');$l.TargetPath='%s';$l.Arguments='%s';"
-                      "$l.WorkingDirectory='%s';$l.IconLocation='%s';$l.Description='%s';$l.Save()"
-                      % (p, exe, args, t, ico, desc))
+            ps.append("$l=$s.CreateShortcut(%s);$l.TargetPath=%s;$l.Arguments=%s;"
+                      "$l.WorkingDirectory=%s;$l.IconLocation=%s;$l.Description=%s;$l.Save()"
+                      % tuple(_q(v) for v in (p, exe, args, t, ico, desc)))
         r = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ";".join(ps)])
         if r.returncode != 0:
             self.log("Aviso: no se pudieron crear todos los accesos (%s)" % r.stderr.strip()[:200])

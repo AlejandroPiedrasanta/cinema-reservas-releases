@@ -414,7 +414,8 @@ const DEMO = {
     path: "C:\\Users\\Cliente\\AppData\\Local\\CinemaProductions", machineId: "8F3A-21C9-77DE-0B54", reason: "",
     steps: ["Carpetas (en tu usuario, sin admin)", "Programa Cinema Reservas", "Python y dependencias (motor)",
             "Base de datos local", "Acceso directo y desinstalador", "Precalentar el motor"] }),
-  activate: async (k) => { await sleep(900); return /^cinema-?productions$/i.test(k) ? { ok: true, master: true } : { ok: false, reason: "Clave no valida. Revisa que este completa y sea de Cinema Reservas." }; },
+  // demo de diseño: "demo" simula una activación correcta (la validación real está en Python)
+  activate: async (k) => { await sleep(900); return k.trim().toLowerCase() === "demo" ? { ok: true } : { ok: false, reason: "Clave no válida. Revisa que esté completa y sea de Cinema Reservas." }; },
   install: async () => { for (let i = 0; i < 6; i++) { ui.set({ step: i, log: "Paso " + (i + 1) }); for (let j = 0; j < 8; j++) { await sleep(120); ui.set({ pct: (i * 8 + j + 1) / 48 * 100 }); } } ui.set({ phase: "done" }); },
   start: async () => { for (let i = 0; i < 10; i++) { await sleep(200); ui.set({ pct: 20 + i * 8, title: "Iniciando servidor…", detail: "esperando servidor (" + (i + 1) + "s)" }); } ui.set({ done: true }); },
   uninstall: async () => { await sleep(800); return true; },

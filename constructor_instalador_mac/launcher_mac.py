@@ -89,7 +89,7 @@ def run_server() -> int:
 
 def stop_server() -> None:
     subprocess.run(["pkill", "-f", "CinemaReservas.*--server"], check=False)
-    subprocess.run("lsof -ti tcp:%d | xargs kill 2>/dev/null" % PORT, shell=True, check=False)
+    subprocess.run("lsof -ti -sTCP:LISTEN tcp:%d | xargs kill 2>/dev/null" % PORT, shell=True, check=False)
 
 
 def start_server(ui) -> None:
@@ -143,11 +143,14 @@ def web_gui() -> int | None:
         import web_launcher
     except Exception:
         return None
-    if port_open():                                   # ya esta corriendo: abrir ventana
-        return web_launcher.open_running(base_url(), stop_server)
     st = lic.check_local()
-    if st.valid and lic.needs_recheck():
+    if not st.valid and st.key:                       # gracia vencida / licencia antigua
+        lic.recheck_online()
+        st = lic.check_local()
+    elif st.valid and lic.needs_recheck():
         threading.Thread(target=lic.recheck_online, daemon=True).start()
+    if st.valid and port_open():                      # ya esta corriendo: abrir ventana
+        return web_launcher.open_running(base_url(), stop_server)
     return web_launcher.run("splash" if st.valid else "license", st.reason if st.key else "",
                             version=version, start_server=start_server, stop_server=stop_server)
 

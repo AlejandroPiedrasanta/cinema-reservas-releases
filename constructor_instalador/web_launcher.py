@@ -26,6 +26,7 @@ class LauncherApi:
         self._view, self._reason, self._h = view, reason, hooks
         self._win = None
         self._busy = False
+        self._started = False
         self._app_open = False
 
     def init(self):
@@ -49,7 +50,18 @@ class LauncherApi:
         if self._busy:
             return
         self._busy = True
+        self._started = True
         w = self._win
+        if self._view == "license":          # tras activar: la ventana pasa al tamano del arranque
+            try:
+                import webview
+                sw, sh = SIZES["splash"]
+                s = (webview.screens or [None])[0]
+                w.w.resize(sw, sh)
+                if s:
+                    w.w.move(s.x + (s.width - sw) // 2, s.y + (s.height - sh) // 2)
+            except Exception:
+                pass
 
         def done():
             self._busy = False
@@ -88,7 +100,9 @@ def run(view: str, reason: str = "", **hooks) -> int:
     api = LauncherApi(view, reason, h)
     api._win = webui.Window(api, view, *SIZES[view])
     webui.start()
-    if api._app_open:            # p. ej. Cmd+Q en Mac: cerrar el servidor igualmente
+    # Se cerro todo: si se llego a arrancar el servidor (aunque se cerrara la ventana de
+    # arranque antes de terminar, o con Cmd+Q en Mac), no dejarlo corriendo solo.
+    if api._started or api._app_open:
         h.stop_server()
     return 0
 

@@ -27,9 +27,8 @@ from pathlib import Path
 
 # ── Configuracion del producto (EDITAR al crear el producto en Gumroad) ──
 # product_id: Gumroad > Producto > Content > "License key" > ver "product_id"
-#             (o en la pestana "Advanced"/API). Tambien se puede sobreescribir
-#             con la variable de entorno CP_PRODUCT_ID o con license_config.json
-#             junto a esta carpeta: {"product_id": "...", "buy_url": "..."}
+#             (o en la pestana "Advanced"/API). Fijo en el codigo a proposito: no se
+#             puede cambiar con archivos ni variables (evita activar con otro producto).
 GUMROAD_PRODUCT_ID = "iHbDhmJuIypLwDTecMEgPQ=="   # CinemaFlow (Gumroad)
 BUY_URL = "https://cinemaproductions.gumroad.com/l/Cinemaflow"
 MAX_DEVICES = 2          # equipos por licencia (Gumroad cuenta "uses")
@@ -42,8 +41,9 @@ _API = "https://api.gumroad.com/v2/licenses/verify"
 # que copiar license.json a otro PC o editarlo a mano funcione).
 _SECRET = b"cinema-productions/reservas/lic/v1"
 # Licencia maestra (uso interno de Cinema Productions): entra sin Gumroad, sin
-# limite de equipos y sin revalidar. Solo se guarda el hash, no la clave.
-_MASTER_SHA256 = "0cfc0f252156f2e5bfe4a88e7f9266b7e9b22227bc5f00eb80c65bb3508e9b10"
+# limite de equipos y sin revalidar. Solo se guarda el hash, no la clave
+# (clave larga y aleatoria: no se puede adivinar a partir del hash).
+_MASTER_SHA256 = "916a36f6b82f980e30ccba0496fee1cfe3ac4871c07d8e6893100d89b4599896"
 
 
 def is_master(key: str) -> bool:
@@ -53,17 +53,7 @@ def is_master(key: str) -> bool:
 
 
 def _cfg() -> dict:
-    out = {"product_id": GUMROAD_PRODUCT_ID, "buy_url": BUY_URL}
-    for base in {Path(__file__).resolve().parent, Path(sys.executable).resolve().parent}:
-        f = base / "license_config.json"
-        if f.exists():
-            try:
-                out.update(json.loads(f.read_text(encoding="utf-8")))
-            except Exception:
-                pass
-    if os.environ.get("CP_PRODUCT_ID"):
-        out["product_id"] = os.environ["CP_PRODUCT_ID"]
-    return out
+    return {"product_id": GUMROAD_PRODUCT_ID, "buy_url": BUY_URL}
 
 
 def buy_url() -> str:
@@ -108,8 +98,24 @@ def machine_id() -> str:
 
 
 def _sign(key: str, mid: str, activated: int) -> str:
+    """Firma v1 (solo clave, equipo y fecha de activacion). Se sigue escribiendo por
+    compatibilidad, pero ya no basta: ver _sign2."""
     msg = f"{key}|{mid}|{activated}".encode()
     return hmac.new(_SECRET + mid.encode(), msg, hashlib.sha256).hexdigest()
+
+
+def _sign2(d: dict, mid: str) -> str:
+    """Firma v2: cubre TODOS los campos que deciden si la licencia vale
+    (fecha de ultima validacion, revocada, maestra), asi editarlos a mano la invalida."""
+    msg = "v2|%s|%s|%d|%d|%d|%d" % (d["key"], mid, int(d["activated_at"]), int(d.get("last_check", 0)),
+                                    1 if d.get("revoked") else 0, 1 if d.get("master") else 0)
+    return hmac.new(_SECRET + mid.encode(), msg.encode(), hashlib.sha256).hexdigest()
+
+
+def _save(d: dict) -> None:
+    d["sig"] = _sign(d["key"], d["machine"], int(d["activated_at"]))
+    d["sig2"] = _sign2(d, d["machine"])
+    license_path().write_text(json.dumps(d), encoding="utf-8")
 
 
 # ── Estado local ─────────────────────────────────────────────────────────
@@ -132,8 +138,16 @@ def check_local() -> Status:
         return Status(False, "No hay licencia activada.")
     mid = machine_id()
     try:
-        ok = (d.get("machine") == mid and
-              hmac.compare_digest(d.get("sig", ""), _sign(d["key"], mid, int(d["activated_at"]))))
+        if d.get("machine") != mid:
+            ok = False
+        elif "sig2" in d:
+            ok = hmac.compare_digest(d["sig2"], _sign2(d, mid))
+        else:
+            # archivo de una version anterior (firma v1): la fecha de ultima validacion
+            # no estaba firmada, asi que se cuenta desde la activacion hasta revalidar
+            ok = hmac.compare_digest(d.get("sig", ""), _sign(d["key"], mid, int(d["activated_at"])))
+            d["last_check"] = d["activated_at"]
+            d["master"] = False
     except Exception:
         ok = False
     if not ok:
@@ -142,7 +156,11 @@ def check_local() -> Status:
         return Status(False, "La licencia fue revocada (reembolso o disputa).")
     if d.get("master") and is_master(d["key"]):
         return Status(True, "", "Licencia maestra", d["key"])
-    age = (time.time() - float(d.get("last_check", d["activated_at"]))) / 86400
+    last = float(d.get("last_check", d["activated_at"]))
+    if last > time.time() + 86400:                     # fecha futura: reloj o archivo alterado
+        return Status(False, "La fecha del equipo no es correcta. Ajusta el reloj y conectate "
+                             "a internet para revalidar la licencia.", d.get("email", ""), d["key"])
+    age = (time.time() - last) / 86400
     if age > GRACE_DAYS:
         return Status(False, "Hace mas de %d dias que no se valida la licencia. "
                              "Conectate a internet para revalidarla." % GRACE_DAYS,
@@ -232,8 +250,8 @@ def activate(key: str) -> Status:
     if is_master(key):
         mid, now = machine_id(), int(time.time())
         rec = {"key": key, "machine": mid, "email": "Licencia maestra", "activated_at": now,
-               "last_check": now, "sig": _sign(key, mid, now), "revoked": False, "master": True}
-        license_path().write_text(json.dumps(rec), encoding="utf-8")
+               "last_check": now, "revoked": False, "master": True}
+        _save(rec)
         return Status(True, "", rec["email"], key)
     if len(key) < 16:
         return Status(False, "Pega la clave completa que te llego por correo.")
@@ -264,15 +282,21 @@ def activate(key: str) -> Status:
 
     now = int(time.time())
     rec = {"key": key, "machine": mid, "email": p.get("email", ""), "activated_at": now,
-           "last_check": now, "sig": _sign(key, mid, now), "revoked": False}
-    license_path().write_text(json.dumps(rec), encoding="utf-8")
+           "last_check": now, "revoked": False}
+    _save(rec)
     return Status(True, "", rec["email"], key)
 
 
 def recheck_online() -> None:
-    """Revalida en segundo plano. Sin red no hace nada (la gracia sigue corriendo)."""
+    """Revalida en linea (en segundo plano o al abrir si la gracia vencio). Sin red no
+    hace nada. Tambien convierte licencias antiguas (firma v1) a la firma v2."""
     d = _load()
     if not d or d.get("master") or _cfg()["product_id"].startswith("REEMPLAZAR"):
+        return
+    try:
+        if d.get("machine") != machine_id():
+            return
+    except Exception:
         return
     try:
         code, res = _verify(d["key"], increment=False, timeout=8)
@@ -285,7 +309,7 @@ def recheck_online() -> None:
     else:
         return
     try:
-        license_path().write_text(json.dumps(d), encoding="utf-8")
+        _save(d)
     except Exception:
         pass
 

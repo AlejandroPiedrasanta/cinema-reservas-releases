@@ -1566,10 +1566,16 @@ def _managed_ssl_ctx():
         return ssl.create_default_context()
 
 
-async def _find_managed_release() -> dict:
+_managed_release_cache = {"ts": 0.0, "data": {}}
+
+
+async def _find_managed_release(fresh: bool = False) -> dict:
     """Release publicado (no borrador ni prerelease) con la version mas alta que
-    tenga el instalador de este sistema: {version, name, url, size, page}."""
+    tenga el instalador de este sistema: {version, name, url, size, page, sha256}.
+    Se guarda 10 min (GitHub permite 60 consultas/hora por IP sin cuenta)."""
     import urllib.request
+    if not fresh and _managed_release_cache["data"] and time.time() - _managed_release_cache["ts"] < 600:
+        return dict(_managed_release_cache["data"])
     owner, repo = _parse_github_url(MANAGED_UPDATE_REPO)
     if not owner or not repo:
         return {}
@@ -1596,11 +1602,15 @@ async def _find_managed_release() -> dict:
         for a in rel.get("assets") or []:
             if _managed_asset_ok(a.get("name")) and a.get("browser_download_url"):
                 if not best or key > best["_key"]:
+                    digest = a.get("digest") or ""
                     best = {"_key": key, "version": (rel.get("tag_name") or "").lstrip("v"),
                             "name": a["name"], "url": a["browser_download_url"],
-                            "size": a.get("size", 0), "page": rel.get("html_url", "")}
+                            "size": a.get("size", 0), "page": rel.get("html_url", ""),
+                            "sha256": digest[7:].lower() if digest.startswith("sha256:") else ""}
                 break
-    return {k: v for k, v in best.items() if not k.startswith("_")}
+    out = {k: v for k, v in best.items() if not k.startswith("_")}
+    _managed_release_cache.update(ts=time.time(), data=dict(out))
+    return out
 
 
 async def _check_managed_update():
@@ -1620,7 +1630,7 @@ async def _apply_managed_update(force: bool = False, dry_run: bool = False) -> d
     reemplaza el programa y conserva reservas y respaldos. macOS: abre el .dmg."""
     import tempfile
     import urllib.request
-    rel = await _find_managed_release()
+    rel = await _find_managed_release(fresh=True)
     if not rel:
         raise HTTPException(status_code=404,
                             detail="No hay instaladores publicados todavía en " + MANAGED_UPDATE_REPO)
@@ -1635,6 +1645,8 @@ async def _apply_managed_update(force: bool = False, dry_run: bool = False) -> d
     _reset_update_progress(rel["name"], rel.get("size", 0))
 
     def _download():
+        nonlocal dest
+        h = hashlib.sha256()
         req = urllib.request.Request(rel["url"], headers={"User-Agent": "cinema-reservas"})
         with urllib.request.urlopen(req, timeout=900, context=_managed_ssl_ctx()) as resp, open(part, "wb") as f:
             total = int(resp.headers.get("Content-Length") or rel.get("size") or 0)
@@ -1644,9 +1656,17 @@ async def _apply_managed_update(force: bool = False, dry_run: bool = False) -> d
                 if not chunk:
                     break
                 f.write(chunk)
+                h.update(chunk)
                 done += len(chunk)
                 _set_update_progress(downloaded=done, total=total, stage="downloading")
-        os.replace(part, dest)
+        if rel.get("sha256") and h.hexdigest() != rel["sha256"]:
+            part.unlink(missing_ok=True)
+            raise ValueError("la descarga llegó dañada (la huella SHA-256 no coincide); inténtalo de nuevo")
+        try:
+            os.replace(part, dest)
+        except OSError:                  # un instalador anterior con ese nombre sigue abierto
+            dest = folder / ("%s-%d%s" % (dest.stem, int(time.time()), dest.suffix))
+            os.replace(part, dest)
 
     try:
         await asyncio.to_thread(_download)
@@ -3646,7 +3666,7 @@ async def check_github_updates():
     """Solo informativo en escritorio: revisa si hay commits nuevos en el repo."""
     import httpx
     if _is_managed_install():                 # instalador con licencia: releases publicas
-        rel = await _find_managed_release()
+        rel = await _find_managed_release(fresh=True)     # boton "Buscar actualizacion"
         v = rel.get("version", "")
         has = bool(v) and _is_newer(v, _local_version)
         return {
@@ -5159,6 +5179,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_UPDATE_PATHS = ("/api/updates/apply-and-restart", "/api/github/apply-update")
+
+
+@app.middleware("http")
+async def _only_local_origin_for_updates(request, call_next):
+    """Instalar actualizaciones solo desde la propia app (localhost). Evita que otra
+    pagina web o un equipo de la red dispare la descarga y apertura del instalador."""
+    if request.method == "POST" and request.url.path in _UPDATE_PATHS:
+        from urllib.parse import urlparse
+        origin = request.headers.get("origin") or request.headers.get("referer") or ""
+        host = (urlparse(origin).hostname or "") if origin else ""
+        client = request.client.host if request.client else ""
+        if (origin and host not in ("localhost", "127.0.0.1", "::1")) or \
+                client not in ("127.0.0.1", "::1", "localhost", "testclient"):
+            return JSONResponse({"detail": "Las actualizaciones solo se instalan desde la propia app."},
+                                status_code=403)
+    return await call_next(request)
 
 # ─── Serve React build (SPA) ─────────────────────────────
 

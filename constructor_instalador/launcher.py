@@ -59,9 +59,15 @@ def version() -> str:
         return ""
 
 
+def ps_quote(p) -> str:
+    """Ruta como texto literal de PowerShell (aguanta apostrofes, p. ej. C:\\Users\\O'Brien)."""
+    return "'" + str(p).replace("'", "''") + "'"
+
+
 def stop_server() -> None:
-    ps = ("Get-Process | Where-Object { $_.Path -like '%s\\python\\*' } | Stop-Process -Force "
-          "-ErrorAction SilentlyContinue" % HOME)
+    ps = ("$h=%s;Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($h, "
+          "[StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue"
+          % ps_quote(str(HOME / "python") + "\\"))
     subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
                    creationflags=NO_WINDOW)
 
@@ -199,12 +205,26 @@ def do_uninstall(wipe: bool) -> bool:
     paths = [_desktop() / "Cinema Reservas.lnk",
              Path(os.environ.get("USERPROFILE", "")) / "Desktop" / "Cinema Reservas.lnk",
              start, HOME / "python", HOME / Path(sys.executable).name, HOME / "icono.ico",
-             HOME / "version.txt", HOME if wipe else HOME / "app" / "build"]
-    q = lambda p: "'" + str(p).replace("'", "''") + "'"
+             HOME / "version.txt"]
+    paths += [HOME] if wipe else [HOME / "app" / "build", HOME / "ventana.json"]
+    q = ps_quote
     me, parent, exe = os.getpid(), os.getppid(), str(Path(sys.executable).resolve())
+    home = str(HOME) + "\\"
+    # 1) espera a que cierre este proceso (y el bootloader de PyInstaller)
+    # 2) cierra lo que siga abierto desde la carpeta: otra ventana de la app, el servidor
+    #    y los procesos de WebView2 que usan su perfil (carpeta webview)
+    # 3) borra, reintentando unos segundos por si algo tarda en soltar los archivos
     ps = ("$ids=@(%d);$p=Get-Process -Id %d -EA 0;if($p -and $p.Path -eq %s){$ids+=%d};"
-          "Wait-Process -Id $ids -Timeout 90 -EA 0;Start-Sleep -Milliseconds 500;" % (me, parent, q(exe), parent))
-    ps += ";".join("Remove-Item -LiteralPath %s -Recurse -Force -EA 0" % q(p) for p in paths)
+          "Wait-Process -Id $ids -Timeout 90 -EA 0;"
+          "$h=%s;Get-Process | ? { $_.Path -and $_.Path.StartsWith($h,[StringComparison]::OrdinalIgnoreCase) } "
+          "| Stop-Process -Force -EA 0;"
+          "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" -EA 0 | "
+          "? { $_.CommandLine -and $_.CommandLine.IndexOf($h,[StringComparison]::OrdinalIgnoreCase) -ge 0 } | "
+          "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA 0 };"
+          "Start-Sleep -Milliseconds 800;$paths=@(%s);"
+          "for($i=0;$i -lt 10;$i++){ $left=@($paths | ? { Test-Path -LiteralPath $_ }); if(-not $left){break};"
+          " $left | ForEach-Object { Remove-Item -LiteralPath $_ -Recurse -Force -EA 0 }; Start-Sleep 1 }"
+          % (me, parent, q(exe), parent, q(home), ",".join(q(p) for p in paths)))
     cmd = ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps]
     # consola oculta (PowerShell no arranca con DETACHED_PROCESS) en su propio grupo
     detached = NO_WINDOW | 0x00000200            # CREATE_NO_WINDOW | NEW_PROCESS_GROUP
@@ -255,7 +275,14 @@ def main() -> int:
         webui.focus_app_window()              # ya hay uno abierto (o arrancando)
         return 0
 
-    if arg != "--uninstall" and port_open():   # ya esta corriendo: solo abrir
+    st = lic.check_local()
+    if not st.valid and st.key and arg != "--uninstall":
+        lic.recheck_online()                  # gracia vencida / licencia antigua: revalidar ya
+        st = lic.check_local()
+    elif st.valid and lic.needs_recheck():
+        threading.Thread(target=lic.recheck_online, daemon=True).start()
+
+    if arg != "--uninstall" and st.valid and port_open():   # ya esta corriendo: solo abrir
         if web:
             try:
                 import web_launcher
@@ -264,10 +291,6 @@ def main() -> int:
                 pass
         webbrowser.open(base_url())
         return 0
-
-    st = lic.check_local()
-    if st.valid and lic.needs_recheck():
-        threading.Thread(target=lic.recheck_online, daemon=True).start()
     if web:
         try:
             if arg == "--uninstall":

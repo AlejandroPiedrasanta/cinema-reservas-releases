@@ -169,11 +169,12 @@ def app_window(url: str, on_closed=None):
     def restored(*_):
         state["max"] = False
 
-    def save(*_):
+    def save():
         try:
+            old = _load_geom() or {"x": 80, "y": 60, "width": 1440, "height": 900}
             if state["max"]:
-                old = _load_geom() or {"x": 80, "y": 60, "width": 1440, "height": 900}
-                old["maximized"] = True
+                data = dict(old, maximized=True)
+            elif w.x <= -10000 or w.y <= -10000:        # cerrada minimizada: posicion falsa
                 data = old
             else:
                 data = {"x": w.x, "y": w.y, "width": w.width, "height": w.height, "maximized": False}
@@ -181,11 +182,22 @@ def app_window(url: str, on_closed=None):
         except Exception:
             pass
 
+    done = {"v": False}
+
+    def closing(*_):
+        save()
+        # al cerrar (tambien Cmd+Q en Mac, donde "closed" puede no llegar) se detiene el servidor
+        # (sincrono: con Cmd+Q la app termina enseguida y un hilo no alcanzaria a correr)
+        if on_closed and not done["v"]:
+            done["v"] = True
+            try:
+                on_closed()
+            except Exception:
+                pass
+
     w.events.maximized += maximized
     w.events.restored += restored
-    w.events.closing += save
-    if on_closed:
-        w.events.closed += lambda *_: on_closed()
+    w.events.closing += closing
     return w
 
 
@@ -200,9 +212,12 @@ def single_instance(name: str = "CinemaReservasLauncher") -> bool:
         return True
     try:
         import ctypes
-        k = ctypes.windll.kernel32
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.CreateMutexW.restype = wintypes.HANDLE
+        k.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
         _mutex = k.CreateMutexW(None, False, "Local\\" + name)
-        return k.GetLastError() != 183          # ERROR_ALREADY_EXISTS
+        return ctypes.get_last_error() != 183    # ERROR_ALREADY_EXISTS
     except Exception:
         return True
 
