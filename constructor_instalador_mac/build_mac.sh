@@ -15,6 +15,7 @@ APP="Cinema Reservas.app"
 PY="${PYTHON:-python3}"
 
 rm -rf build dist
+"$PY" -m pip install -q pywebview        # interfaz web (por si el workflow no lo instala)
 cp "$SRV/build/logo.png" "$UI/ui_web/logo.png"
 echo "[1/4] Empaquetando app + servidor + Python (PyInstaller)…"
 "$PY" -m PyInstaller --noconfirm --windowed --name CinemaReservas \

@@ -1,0 +1,55 @@
+# Fabrica el instalador de macOS (.dmg) para Apple Silicon e Intel.
+# Uso: sube 3_CODIGO_FUENTE a un repo (privado) de GitHub -> pestaña Actions -> "Instalador macOS" -> Run workflow.
+# El .dmg aparece en "Artifacts" al terminar (~10 min).
+#
+# Firma opcional (sin esto el .dmg funciona igual, pero macOS pide "clic derecho > Abrir" la 1a vez):
+#   Secrets del repo: DEVELOPER_ID  = "Developer ID Application: Tu Nombre (TEAMID)"
+#                     MACOS_CERT_P12 (base64 del .p12) y MACOS_CERT_PASSWORD
+name: Instalador macOS
+on:
+  workflow_dispatch:
+  push:
+    tags: ["mac-v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14,        arch: arm64  }   # Apple Silicon (M1/M2/M3/M4)
+          - { os: macos-15-intel,  arch: x86_64 }   # Mac con Intel
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Dependencias
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PySide6 pyinstaller pywebview -r app_servidor/requirements.txt
+          brew install create-dmg
+      - name: Certificado de firma (opcional)
+        if: env.MACOS_CERT_P12 != ''
+        run: |
+          echo "${{ secrets.MACOS_CERT_P12 }}" | base64 --decode > cert.p12
+          security create-keychain -p ci build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p ci build.keychain
+          security import cert.p12 -k build.keychain -P "${{ secrets.MACOS_CERT_PASSWORD }}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci build.keychain
+      - name: Fabricar .app y .dmg
+        working-directory: constructor_instalador_mac
+        env:
+          DEVELOPER_ID: ${{ secrets.DEVELOPER_ID }}
+          OUT_DIR: ${{ github.workspace }}/dmg
+          PYTHON: python
+        run: |
+          chmod +x build_mac.sh
+          ./build_mac.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CinemaReservas-macOS-${{ matrix.arch }}
+          path: dmg/*.dmg
