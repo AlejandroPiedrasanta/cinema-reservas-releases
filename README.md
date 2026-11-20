@@ -24,7 +24,8 @@ La app revisa este repositorio. Cuando aparece una versión nueva en *Releases*,
 Para publicar una versión nueva:
 1. Sube `version.txt` (raíz y `app_servidor/`) a la versión nueva, p. ej. `1.20.85`.
 2. Windows: `constructor_instalador/build.ps1` → `CinemaReservas-1.20.85-Setup.exe`.
-3. Mac: pestaña **Actions → Instalador macOS → Run workflow** → descarga los `.dmg`.
+3. Mac: en un Mac, `constructor_instalador_mac/build_mac.sh`; o con GitHub Actions
+   (workflow «Instalador macOS», ver `constructor_instalador_mac/LEEME_MAC.md`).
 4. Crea el release `v1.20.85` y adjunta los tres instaladores.
 
 ## Estructura
