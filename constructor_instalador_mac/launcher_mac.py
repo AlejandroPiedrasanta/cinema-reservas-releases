@@ -88,9 +88,19 @@ def run_server() -> int:
     return 0
 
 
+_LISTENER = "lsof -nP -t -iTCP:%d -sTCP:LISTEN 2>/dev/null" % PORT   # solo quien ESCUCHA en el puerto
+
+
 def stop_server() -> None:
+    """Cierra el servidor: aviso normal (guarda datos) y, si sigue vivo a los 5 s, forzado."""
     subprocess.run(["pkill", "-f", "CinemaReservas.*--server"], check=False)
-    subprocess.run("lsof -ti -sTCP:LISTEN tcp:%d | xargs kill 2>/dev/null" % PORT, shell=True, check=False)
+    subprocess.run(_LISTENER + " | xargs kill 2>/dev/null", shell=True, check=False)
+    for _ in range(20):
+        if not port_open():
+            return
+        time.sleep(0.25)
+    subprocess.run(["pkill", "-9", "-f", "CinemaReservas.*--server"], check=False)
+    subprocess.run(_LISTENER + " | xargs kill -9 2>/dev/null", shell=True, check=False)
 
 
 def start_server(ui) -> None:
@@ -250,17 +260,27 @@ def uitest(out_dir: str) -> int:
                 except Exception:
                     pass
 
+    paradas = {"n": 0}
+
+    def stop_contado():
+        paradas["n"] += 1
+        stop_server()
+
     api = web_launcher.LauncherApi("license", "", SimpleNamespace(
-        version=version, start_server=start_server, stop_server=stop_server))
+        version=version, start_server=start_server, stop_server=stop_contado))
     api._win = webui.Window(api, "license", *web_launcher.SIZES["license"])
     threading.Thread(target=drive, args=(api,), daemon=True).start()
     webui.start()
     if res.get("app_abierta"):
-        for _ in range(10):              # el cierre de la ventana ya detuvo el servidor
+        por_ventana = paradas["n"] > 0
+        if not por_ventana:              # igual que web_launcher.run al terminar el bucle
+            stop_contado()
+        for _ in range(20):
             if not port_open():
                 break
             time.sleep(0.5)
-        paso("al cerrar la ventana se detiene el servidor", not port_open())
+        paso("al cerrar la ventana se detiene el servidor", not port_open(),
+             "desde el cierre de la ventana" if por_ventana else "al terminar la app")
     stop_server()
     lic.deactivate_local()
     res["ok"] = all(p["ok"] for p in res["pasos"]) and len(res["pasos"]) >= 8
