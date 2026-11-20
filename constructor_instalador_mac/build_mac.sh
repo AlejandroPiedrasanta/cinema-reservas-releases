@@ -28,7 +28,7 @@ echo "[1/4] Empaquetando app + servidor + Python (PyInstaller)…"
   --collect-submodules uvicorn --collect-submodules mongomock_motor --collect-submodules motor \
   --collect-submodules pymongo --collect-submodules dns --collect-data certifi --collect-data tzdata \
   --add-data "$SRV/build:build" --add-data "$SRV/themes:themes" --add-data "$SRV/version.txt:." \
-  --add-data "$SRV/app.py:app_src" --add-data "$UI/icono.ico:." --add-data "$SRV/build/logo.png:." \
+  --add-data "$SRV/app.py:app_src" --add-data "$SRV/notificador.py:app_src" --add-data "$UI/icono.ico:." --add-data "$SRV/build/logo.png:." \
   --exclude-module tkinter --exclude-module matplotlib --exclude-module numpy \
   --exclude-module PySide6.QtNetwork --exclude-module PySide6.QtQml --exclude-module PySide6.QtQuick \
   --exclude-module PySide6.QtWebEngineCore --exclude-module PySide6.QtPdf --exclude-module PySide6.QtMultimedia \

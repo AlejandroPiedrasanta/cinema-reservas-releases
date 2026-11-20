@@ -462,7 +462,11 @@ async def lifespan(app_instance: FastAPI):
     # ── Check for updates in background ──────────────────────────────────────
     asyncio.create_task(_check_for_updates())
 
+    # ── Recordatorios con notificación emergente del sistema ─────────────────
+    _rem_task = asyncio.create_task(_reminder_loop())
+
     yield
+    _rem_task.cancel()
     if _using_embedded:
         if _task:
             _task.cancel()
@@ -695,6 +699,7 @@ class NotificationSettingsModel(BaseModel):
     reminder_periods: Optional[list] = None
     reminder_time: Optional[str] = "09:00"
     reminder_hours_before: Optional[int] = 0
+    desktop_notifications: Optional[bool] = None
     admin_email: Optional[str] = None
     admin_whatsapp: Optional[str] = None
     notification_channel: str = "email"
@@ -1082,6 +1087,7 @@ async def update_app_settings(settings: NotificationSettingsModel):
         await db.app_settings.insert_one(update_doc)
     if _using_embedded:
         asyncio.create_task(_save_embedded_data())
+    asyncio.create_task(_run_reminders())             # aplicar ya los nuevos ajustes de aviso
     saved = await db.app_settings.find_one({}, {"_id": 0})
     if saved and saved.get("resend_api_key"):
         key = saved["resend_api_key"]
@@ -1712,8 +1718,15 @@ async def export_reservations_xlsx():
 
 @api_router.post("/reminders/send")
 async def trigger_reminders_manual():
-    return {"success": True, "events_found": 0, "sent": 0,
-            "message": "Recordatorios por email disponibles en la versión web"}
+    """Botón "Enviar a todos los canales": avisa ya del próximo evento con un pop-up."""
+    if not notificador.supported():
+        return {"success": True, "events_found": 0, "sent": 0,
+                "message": "Este equipo no admite notificaciones emergentes"}
+    try:
+        res = await desktop_notifications_next()
+        return {"success": True, "events_found": 1, "sent": 1, "message": res["message"]}
+    except HTTPException as e:
+        return {"success": False, "events_found": 0, "sent": 0, "message": e.detail}
 
 
 
@@ -4955,6 +4968,336 @@ async def get_pending_notifications():
         {"client_name": 1, "event_date": 1, "event_type": 1, "venue": 1, "_id": 1})
     docs = await cursor.to_list(100)
     return [doc_to_dict(d) for d in docs]
+
+
+# ─── Recordatorios con notificación emergente del sistema (Windows / macOS) ───
+# El servidor revisa cada 30 s qué recordatorios tocan y muestra un pop-up nativo.
+# No depende del minuto exacto: si la app estaba cerrada a la hora del aviso, avisa
+# en cuanto se abre. Cada aviso se registra en db.reminder_log para no repetirlo.
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+import notificador  # noqa: E402
+notificador.set_data_dir(ROOT_DIR)
+
+_reminder_state = {"last_check": "", "last_sent": [], "error": "", "sched_sig": None, "scheduled": 0}
+_reminder_lock = asyncio.Lock()
+_ACTIVE_FILTER = {"status": {"$nin": ["Cancelado", "Completado", "Cancelada", "Completada"]}}
+
+
+def _reminder_now(settings: dict) -> datetime:
+    """Hora local (sin zona) según la zona horaria de Ajustes, o la del equipo."""
+    tzname = (settings or {}).get("timezone")
+    if tzname:
+        try:
+            from zoneinfo import ZoneInfo
+            return datetime.now(ZoneInfo(tzname)).replace(tzinfo=None)
+        except Exception:
+            pass
+    return datetime.now()
+
+
+def _parse_hhmm(v, default=None):
+    try:
+        h, m = str(v or "").strip()[:5].split(":")
+        return int(h), int(m)
+    except Exception:
+        return default
+
+
+def _reminder_periods(settings: dict) -> list:
+    raw = settings.get("reminder_periods") or [settings.get("reminder_days", 3)]
+    out = set()
+    for p in raw if isinstance(raw, list) else [raw]:
+        try:
+            p = int(p)
+            if 0 <= p <= 60:
+                out.add(p)
+        except Exception:
+            pass
+    return sorted(out) or [3]
+
+
+def _when_text(days_left: int, ev_time: str) -> str:
+    when = {0: "Hoy", 1: "Mañana", 2: "Pasado mañana"}.get(days_left, "En %d días" % days_left)
+    return when + (" a las %s" % ev_time if ev_time else "")
+
+
+def _reminder_plan(docs: list, settings: dict, now: datetime) -> tuple:
+    """Devuelve (vencidos, proximos). Cada elemento: dict con key, at, title, lines, covers."""
+    periods = _reminder_periods(settings)
+    rh, rm = _parse_hhmm(settings.get("reminder_time"), (9, 0))
+    try:
+        hours_before = max(0, int(settings.get("reminder_hours_before") or 0))
+    except Exception:
+        hours_before = 0
+    today = now.date()
+    due, upcoming = [], []
+    for d in docs:
+        try:
+            ev_date = datetime.strptime(str(d.get("event_date") or "")[:10], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        rid = str(d.get("_id") or d.get("id") or "")
+        et = _parse_hhmm(d.get("event_time"))
+        ev_dt = datetime.combine(ev_date, datetime.min.time()).replace(hour=et[0], minute=et[1]) if et else None
+        if ev_dt and ev_dt <= now:
+            continue                                  # ya empezó
+        days_left = (ev_date - today).days
+        if days_left < 0:
+            continue
+        name = (d.get("client_name") or "Cliente").strip()
+        kind = (d.get("event_type") or "Evento").strip()
+        ev_time = "%02d:%02d" % et if et else ""
+        title = "%s · %s" % (kind, name)
+        place = (d.get("venue") or "").strip()
+
+        def item(key, at, lines, covers=None):
+            return {"key": key, "at": at, "title": title, "lines": lines,
+                    "covers": covers or [key], "event_date": ev_date.isoformat(), "days_left": days_left}
+
+        # avisos por días de anticipación (a la hora diaria configurada)
+        trig = []
+        for p in periods:
+            at = datetime.combine(ev_date - timedelta(days=p), datetime.min.time()).replace(hour=rh, minute=rm)
+            key = "%s|%s|d%d" % (rid, ev_date.isoformat(), p)
+            if at <= now:
+                trig.append(key)                      # orden: el periodo más corto primero
+            else:
+                upcoming.append(item(key, at, [_when_text(p, ev_time) + (" · " + place if place else ""),
+                                               "Recordatorio de evento"]))
+        day_item = None
+        if trig:                                      # solo el aviso más reciente; los anteriores
+            lines = [_when_text(days_left, ev_time) + (" · " + place if place else ""),   # quedan cubiertos
+                     "Recordatorio de evento"]
+            day_item = item(trig[0], now, lines, trig)
+        # aviso X horas antes (solo si la reserva tiene hora)
+        if hours_before and ev_dt:
+            at = ev_dt - timedelta(hours=hours_before)
+            key = "%s|%s|h%d" % (rid, ev_date.isoformat(), hours_before)
+            mins = int((ev_dt - now).total_seconds() // 60)
+            left = ("Empieza en %d h %02d min" % (mins // 60, mins % 60)) if mins >= 60 else "Empieza en %d min" % max(mins, 0)
+            if at <= now:
+                h_item = item(key, now, [left + " (%s)" % ev_time + (" · " + place if place else ""),
+                                         "Recordatorio de evento"])
+                if day_item:                          # tocan los dos a la vez: un solo pop-up
+                    h_item["covers"] = [key] + day_item["covers"]
+                    h_item["also"] = day_item["key"]
+                    day_item = None
+                due.append(h_item)
+            else:
+                upcoming.append(item(key, at, ["Empieza en %d h (%s)" % (hours_before, ev_time)
+                                               + (" · " + place if place else ""), "Recordatorio de evento"]))
+        if day_item:
+            due.append(day_item)
+    upcoming.sort(key=lambda x: x["at"])
+    return due, upcoming
+
+
+async def _reminder_docs(now: datetime, settings: dict) -> list:
+    periods = _reminder_periods(settings)
+    end = (now.date() + timedelta(days=max(periods) + 45)).isoformat()   # +45: se programan en Windows
+    q = {"event_date": {"$gte": now.date().isoformat(), "$lte": end}, **_ACTIVE_FILTER}
+    return await db.reservations.find(
+        q, {"client_name": 1, "event_type": 1, "event_date": 1, "event_time": 1, "venue": 1, "status": 1}
+    ).to_list(None)
+
+
+async def _run_reminders() -> dict:
+    """Revisa y envía los recordatorios que ya tocan. Devuelve un resumen."""
+    async with _reminder_lock:
+        settings = await db.app_settings.find_one({}, {"_id": 0}) or {}
+        now = _reminder_now(settings)
+        _reminder_state["last_check"] = now.strftime("%Y-%m-%d %H:%M:%S")
+        if not notificador.supported():
+            return {"sent": 0, "due": 0}
+        active = bool(settings.get("reminders_enabled")) and settings.get("desktop_notifications") is not False
+        due, upcoming = [], []
+        if active:
+            docs = await _reminder_docs(now, settings)
+            due, upcoming = _reminder_plan(docs, settings, now)
+        await _sync_windows_schedule(upcoming, settings)
+        if not due:
+            return {"sent": 0, "due": 0}
+        sent_keys = {d["key"] for d in await db.reminder_log.find(
+            {"key": {"$in": [it["key"] for it in due]}}, {"key": 1}).to_list(None)}
+        # los que Windows ya tenía programados a esa hora los mostró Windows: no repetir
+        sched_keys = {d["key"] for d in await db.reminder_sched.find(
+            {"key": {"$in": [it["key"] for it in due]}, "at": {"$lte": now.strftime("%Y-%m-%dT%H:%M")}},
+            {"key": 1}).to_list(None)}
+        done_by_windows = [it for it in due if it["key"] not in sent_keys and it["key"] in sched_keys]
+        if done_by_windows:
+            stamp = datetime.now(timezone.utc).isoformat()
+            for it in done_by_windows:
+                for k in it["covers"]:
+                    await db.reminder_log.update_one({"key": k}, {"$set": {"key": k, "sent_at": stamp, "by": "windows",
+                                                      "event_date": it["event_date"]}}, upsert=True)
+                sent_keys.add(it["key"])
+        pending = [it for it in due if it["key"] not in sent_keys]
+        sent = 0
+        if len(pending) > 4:                         # muchos a la vez: uno de resumen
+            names = ", ".join(it["title"].split(" · ", 1)[-1] for it in pending[:3])
+            res = await asyncio.to_thread(
+                notificador.notify, "Tienes %d eventos próximos" % len(pending),
+                [names + ("…" if len(pending) > 3 else ""), "Abre Cinema Reservas para ver el detalle"],
+                "resumen")
+            ok_items = pending if res["ok"] else []
+            if not res["ok"]:
+                _reminder_state["error"] = res["error"]
+        else:
+            ok_items = []
+            for it in pending:
+                res = await asyncio.to_thread(notificador.notify, it["title"], it["lines"],
+                                              it["key"].replace("|", "-")[-60:])
+                if res["ok"]:
+                    ok_items.append(it)
+                else:
+                    _reminder_state["error"] = res["error"]
+                    break
+        stamp = datetime.now(timezone.utc).isoformat()
+        for it in ok_items:
+            for k in it["covers"]:
+                await db.reminder_log.update_one({"key": k}, {"$set": {"key": k, "sent_at": stamp,
+                                                  "event_date": it["event_date"]}}, upsert=True)
+            sent += 1
+            _reminder_state["last_sent"] = ([{"title": it["title"], "text": it["lines"][0],
+                                              "at": now.strftime("%Y-%m-%d %H:%M")}]
+                                            + _reminder_state["last_sent"])[:5]
+        if ok_items:
+            _reminder_state["error"] = ""
+            # limpiar registros de eventos ya pasados
+            await db.reminder_log.delete_many({"event_date": {"$lt": (now.date() - timedelta(days=1)).isoformat()}})
+            if _using_embedded:
+                asyncio.create_task(_save_embedded_data())
+        return {"sent": sent, "due": len(pending)}
+
+
+def _aware_iso(at: datetime, settings: dict) -> str:
+    tzname = (settings or {}).get("timezone")
+    if tzname:
+        try:
+            from zoneinfo import ZoneInfo
+            return at.replace(tzinfo=ZoneInfo(tzname)).isoformat()
+        except Exception:
+            pass
+    return at.astimezone().isoformat()
+
+
+async def _sync_windows_schedule(upcoming: list, settings: dict) -> None:
+    """Deja programados en Windows los próximos avisos para que salgan aunque la app esté
+    cerrada. Solo vuelve a programar cuando algo cambia (reservas o ajustes)."""
+    if sys.platform != "win32":
+        return
+    items = upcoming[:200]
+    sig = tuple((it["key"], it["at"].strftime("%Y-%m-%dT%H:%M"), it["title"], tuple(it["lines"])) for it in items)
+    if sig == _reminder_state["sched_sig"]:
+        return
+    res = await asyncio.to_thread(notificador.schedule, [
+        {"key": it["key"], "when": _aware_iso(it["at"], settings), "title": it["title"], "lines": it["lines"]}
+        for it in items])
+    if not res["ok"]:
+        _reminder_state["error"] = "No se pudieron programar los avisos en Windows: " + res["error"]
+        return
+    _reminder_state["sched_sig"] = sig
+    _reminder_state["scheduled"] = res["count"]
+    if _reminder_state["error"].startswith("No se pudieron programar"):
+        _reminder_state["error"] = ""
+    # se conservan los ya vencidos (Windows los acaba de mostrar) para no repetirlos
+    now_s = _reminder_now(settings).strftime("%Y-%m-%dT%H:%M")
+    old_s = (_reminder_now(settings) - timedelta(days=3)).strftime("%Y-%m-%dT%H:%M")
+    await db.reminder_sched.delete_many({"$or": [{"at": {"$gt": now_s}}, {"at": {"$lt": old_s}}]})
+    if items:
+        await db.reminder_sched.insert_many([{"key": it["key"], "at": it["at"].strftime("%Y-%m-%dT%H:%M")}
+                                             for it in items])
+    if _using_embedded:
+        asyncio.create_task(_save_embedded_data())
+
+
+async def _reminder_loop():
+    await asyncio.sleep(8)                            # deja arrancar la app primero
+    while True:
+        try:
+            await _run_reminders()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            _reminder_state["error"] = str(e)[:300]
+            logger.warning(f"Recordatorios: {e}")
+        await asyncio.sleep(30)
+
+
+@api_router.get("/notifications/desktop/status")
+async def desktop_notifications_status():
+    settings = await db.app_settings.find_one({}, {"_id": 0}) or {}
+    now = _reminder_now(settings)
+    docs = await _reminder_docs(now, settings)
+    _, upcoming = _reminder_plan(docs, settings, now)
+    sent_keys = {d["key"] for d in await db.reminder_log.find(
+        {"key": {"$in": [u["key"] for u in upcoming]}}, {"key": 1}).to_list(None)}
+    nxt = [{"title": u["title"], "at": u["at"].strftime("%Y-%m-%d %H:%M"), "days_left": u["days_left"]}
+           for u in upcoming if u["key"] not in sent_keys][:5]
+    setting = await asyncio.to_thread(notificador.windows_setting) if sys.platform == "win32" else ""
+    return {
+        "supported": notificador.supported(),
+        "platform": "windows" if sys.platform == "win32" else ("mac" if sys.platform == "darwin" else sys.platform),
+        "reminders_enabled": bool(settings.get("reminders_enabled")),
+        "desktop_enabled": settings.get("desktop_notifications") is not False,
+        "blocked": setting if setting and setting not in ("Enabled", "Unknown") else "",
+        "blocked_text": notificador.BLOCKED_TEXT.get(setting, "") if setting not in ("Enabled", "Unknown", "") else "",
+        "now": now.strftime("%Y-%m-%d %H:%M"),
+        "last_check": _reminder_state["last_check"],
+        "last_sent": _reminder_state["last_sent"],
+        "error": _reminder_state["error"],
+        "scheduled_in_windows": _reminder_state["scheduled"] if sys.platform == "win32" else 0,
+        "next": nxt,
+    }
+
+
+@api_router.post("/notifications/desktop/test")
+async def desktop_notifications_test():
+    res = await asyncio.to_thread(
+        notificador.notify, "Prueba de recordatorio ✓",
+        ["Así te avisará Cinema Reservas de tus próximos eventos.", "Se queda en pantalla hasta que la cierres."],
+        "prueba")
+    if not res["ok"]:
+        raise HTTPException(status_code=500, detail=res["error"] or "No se pudo mostrar la notificación")
+    return {"ok": True, "message": "Notificación enviada. Debe aparecer en la esquina de la pantalla."}
+
+
+@api_router.post("/notifications/desktop/next")
+async def desktop_notifications_next():
+    """Avisa ahora mismo del próximo evento (sin esperar a la hora configurada)."""
+    settings = await db.app_settings.find_one({}, {"_id": 0}) or {}
+    now = _reminder_now(settings)
+    docs = await db.reservations.find(
+        {"event_date": {"$gte": now.date().isoformat()}, **_ACTIVE_FILTER},
+        {"client_name": 1, "event_type": 1, "event_date": 1, "event_time": 1, "venue": 1}
+    ).sort("event_date", 1).to_list(20)
+    nxt = None
+    for d in docs:
+        et = _parse_hhmm(d.get("event_time"))
+        if d.get("event_date") == now.date().isoformat() and et and (et[0], et[1]) <= (now.hour, now.minute):
+            continue
+        nxt = d
+        break
+    if not nxt:
+        res = await asyncio.to_thread(notificador.notify, "Sin eventos próximos",
+                                      ["No tienes reservas pendientes."], "proximo", False)
+    else:
+        days_left = (datetime.strptime(nxt["event_date"][:10], "%Y-%m-%d").date() - now.date()).days
+        et = _parse_hhmm(nxt.get("event_time"))
+        place = (nxt.get("venue") or "").strip()
+        res = await asyncio.to_thread(
+            notificador.notify, "%s · %s" % (nxt.get("event_type") or "Evento", nxt.get("client_name") or "Cliente"),
+            [_when_text(days_left, "%02d:%02d" % et if et else "") + (" · " + place if place else ""),
+             "Próximo evento (%s)" % nxt["event_date"][:10]], "proximo")
+    if not res["ok"]:
+        raise HTTPException(status_code=500, detail=res["error"] or "No se pudo mostrar la notificación")
+    return {"ok": True, "message": "Aviso del próximo evento enviado."}
+
+
+@api_router.post("/notifications/desktop/open-settings")
+async def desktop_notifications_open_settings():
+    return {"ok": notificador.open_settings()}
 
 
 @api_router.post("/reminders/test-email")

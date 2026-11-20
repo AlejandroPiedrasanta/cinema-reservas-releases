@@ -52,7 +52,7 @@ Compress-Archive "$work\rt\*" "$pay\runtime.zip" -CompressionLevel Optimal
 
 # ── 2) app: servidor + frontend (sin datos, tests ni mapas) ──
 Write-Host "[2/4] Programa"
-foreach ($f in "app.py", "license_core.py", "ssl_bootstrap.py", "requirements.txt", "version.txt", "version.json", "icono.ico") {
+foreach ($f in "app.py", "license_core.py", "notificador.py", "ssl_bootstrap.py", "requirements.txt", "version.txt", "version.json", "icono.ico") {
     Copy-Item "$sys\$f" "$work\app\$f"
 }
 Copy-Item "$sys\themes" "$work\app\themes" -Recurse

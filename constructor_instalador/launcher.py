@@ -214,7 +214,13 @@ def do_uninstall(wipe: bool) -> bool:
     # 2) cierra lo que siga abierto desde la carpeta: otra ventana de la app, el servidor
     #    y los procesos de WebView2 que usan su perfil (carpeta webview)
     # 3) borra, reintentando unos segundos por si algo tarda en soltar los archivos
-    ps = ("$ids=@(%d);$p=Get-Process -Id %d -EA 0;if($p -and $p.Path -eq %s){$ids+=%d};"
+    # 0) quita los recordatorios que Windows tenia programados para la app
+    toasts = ("try{[void][Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+              "ContentType = WindowsRuntime];$tn=[Windows.UI.Notifications.ToastNotificationManager]::"
+              "CreateToastNotifier('CinemaProductions.CinemaReservas');"
+              "foreach($s in @($tn.GetScheduledToastNotifications())){$tn.RemoveFromSchedule($s)};"
+              "[Windows.UI.Notifications.ToastNotificationManager]::History.Clear('CinemaProductions.CinemaReservas')}catch{};")
+    ps = toasts + ("$ids=@(%d);$p=Get-Process -Id %d -EA 0;if($p -and $p.Path -eq %s){$ids+=%d};"
           "Wait-Process -Id $ids -Timeout 90 -EA 0;"
           "$h=%s;Get-Process | ? { $_.Path -and $_.Path.StartsWith($h,[StringComparison]::OrdinalIgnoreCase) } "
           "| Stop-Process -Force -EA 0;"
@@ -232,11 +238,29 @@ def do_uninstall(wipe: bool) -> bool:
         subprocess.Popen(cmd, creationflags=detached | 0x01000000)
     except OSError:
         subprocess.Popen(cmd, creationflags=detached)
+    for key in (UNINSTALL_KEY, r"Software\Classes\AppUserModelId\CinemaProductions.CinemaReservas",
+                r"Software\Classes\cinemareservas"):
+        _delete_reg_tree(key)
+    return True
+
+
+def _delete_reg_tree(key: str) -> None:
+    """Borra una clave de HKCU con todas sus subclaves (winreg.DeleteKey no es recursivo)."""
     try:
-        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY)
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+            subs = []
+            i = 0
+            while True:
+                try:
+                    subs.append(winreg.EnumKey(k, i))
+                    i += 1
+                except OSError:
+                    break
+        for sub in subs:
+            _delete_reg_tree(key + "\\" + sub)
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key)
     except OSError:
         pass
-    return True
 
 
 def uninstall(app: QApplication) -> int:

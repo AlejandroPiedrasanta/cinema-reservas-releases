@@ -10,9 +10,9 @@ import {
 } from "lucide-react";
 import { useSettings, CURRENCIES } from "@/context/SettingsContext";
 import { useToast } from "@/hooks/use-toast";
-import { getAppSettings, updateAppSettings, getDbStats, testDbConnection, switchDatabase, resetDatabase, sendTestReminder, testEmailConnection, getBackupHistory, createServerBackup, deleteBackupFile, downloadBackupUrl, restoreBackup, getGithubConfig, saveGithubConfig, checkGithubUpdates, applyGithubUpdate } from "@/lib/api";
+import { getAppSettings, updateAppSettings, getDbStats, testDbConnection, switchDatabase, resetDatabase, sendTestReminder, testEmailConnection, getBackupHistory, createServerBackup, deleteBackupFile, downloadBackupUrl, restoreBackup, getGithubConfig, saveGithubConfig, checkGithubUpdates, applyGithubUpdate, getDesktopNotifStatus, testDesktopNotif, notifyNextDesktop, openNotifSettings } from "@/lib/api";
+import { apiMsg } from "@/lib/apiMsg";
 import { celebrateUpdate } from "@/lib/celebrations";
-import { useNotifications } from "@/hooks/useNotifications";
 import { Section, SectionSearchBar } from "@/components/appearance/SectionShell";
 import { SectionSearchContext } from "@/lib/sectionSearch";
 import { SecuritySection } from "@/components/SecuritySection";
@@ -42,7 +42,6 @@ function buildWhatsappLink(phone, events) {
 export default function Settings() {
   const [searchQuery, setSearchQuery] = useState("");
   const { language, currency, tr, changeLanguage, changeCurrency, formatCurrency } = useSettings();
-  const { requestPermission, showNotification, startPolling } = useNotifications();
   const { toast } = useToast();
   const s = tr.settings;
 
@@ -535,13 +534,7 @@ export default function Settings() {
         payload.auto_cleanup_months = null;
       }
       await updateAppSettings(payload);
-      // Persist reminder settings to localStorage so the hook can read them
-      localStorage.setItem("cp_reminder_time", notif.reminder_time || "09:00");
-      localStorage.setItem("cp_reminder_days", String(notif.reminder_days || 3));
-      // Restart notification polling if reminders are enabled
-      if (Notification.permission === "granted" && notif.reminders_enabled) {
-        startPolling();
-      }
+      setTimeout(loadDesk, 2500);       // el servidor reprograma los avisos con los ajustes nuevos
       toast({ title: s.notifSaved + " ✓" });
     } catch {
       toast({ title: "Error al guardar", variant: "destructive" });
@@ -645,61 +638,31 @@ export default function Settings() {
     }
   };
 
-  // ── System Notifications ──────────────────────────────────────
-  const [notifPermission, setNotifPermission] = useState(() =>
-    (typeof window !== "undefined" && "Notification" in window) ? Notification.permission : "unsupported"
-  );
-  const [immediateLoading, setImmediateLoading] = useState(false);
-
-  const handleRequestPermission = async () => {
-    if (!("Notification" in window)) {
-      toast({ title: language === "es" ? "Tu navegador no soporta notificaciones" : "Browser does not support notifications", variant: "destructive" });
-      return;
-    }
+  // ── Pop-ups nativos del sistema (Windows / macOS) ─────────────
+  const [desk, setDesk] = useState(null);
+  const [deskBusy, setDeskBusy] = useState("");
+  const loadDesk = React.useCallback(() => {
+    getDesktopNotifStatus().then(setDesk).catch(() => setDesk(d => d || { supported: false }));
+  }, []);
+  useEffect(() => { loadDesk(); }, [loadDesk]);
+  const deskAction = async (kind) => {
+    setDeskBusy(kind);
     try {
-      const result = await requestPermission();
-      setNotifPermission(result);
-      if (result === "granted") {
-        localStorage.setItem("cp_notif_enabled", "true");
-        localStorage.setItem("cp_reminder_time", notif.reminder_time || "09:00");
-        localStorage.setItem("cp_reminder_days", String(notif.reminder_days || 3));
-        toast({ title: language === "es" ? "Notificaciones de escritorio activadas ✓" : "Desktop notifications enabled ✓" });
-      } else {
-        toast({ title: language === "es" ? "Permiso denegado" : "Permission denied", variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "Error al solicitar permiso", variant: "destructive" });
-    }
-  };
-
-  const handleTestSystemNotif = () => {
-    if (Notification.permission !== "granted") return;
-    showNotification(
-      "Cinema Productions — Prueba ✓",
-      language === "es" ? "Las notificaciones de escritorio están funcionando." : "Desktop notifications are working.",
-    );
-    toast({ title: language === "es" ? "Notificación de prueba enviada ✓" : "Test notification sent ✓" });
-  };
-
-  const handleNotifyImmediate = async () => {
-    if (Notification.permission !== "granted") {
-      toast({ title: language === "es" ? "Primero activa las notificaciones del escritorio" : "Enable desktop notifications first", variant: "destructive" });
-      return;
-    }
-    setImmediateLoading(true);
-    try {
-      const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/push/test`, { method: "POST" });
-      const data = await res.json();
-      if (data.ok) {
-        toast({ title: language === "es" ? `Push enviado a ${data.sent_to} dispositivo(s) ✓` : `Push sent to ${data.sent_to} device(s) ✓` });
-      } else {
-        toast({ title: "Error al enviar push", variant: "destructive" });
-      }
-    } catch {
-      toast({ title: "Error al conectar con el servidor", variant: "destructive" });
+      const fn = kind === "test" ? testDesktopNotif : kind === "next" ? notifyNextDesktop : openNotifSettings;
+      const res = await fn();
+      if (res?.message) toast({ title: res.message });
+      loadDesk();
+    } catch (err) {
+      toast({ title: apiMsg(err), variant: "destructive" });
     } finally {
-      setImmediateLoading(false);
+      setDeskBusy("");
     }
+  };
+  const fmtAt = (at) => {
+    try {
+      const d = new Date(at.replace(" ", "T"));
+      return d.toLocaleString(language === "es" ? "es-GT" : "en-US", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+    } catch { return at; }
   };
 
   // ── Clear All Data ───────────────────────────────────────────
@@ -1059,6 +1022,137 @@ export default function Settings() {
                   {language === "es" ? "Toca para expandir" : "Tap to expand"}
                 </span>
               </div>
+
+              {/* ─── 0. Pop-up nativo de Windows / macOS (recomendado, sin configurar) ─── */}
+              {(() => {
+                const isOpen = openChannel === "pc";
+                const isMac = desk?.platform === "mac";
+                const osName = isMac ? "macOS" : "Windows";
+                const deskOn = notif.desktop_notifications !== false;
+                const blocked = !!desk?.blocked;
+                const active = !!desk?.supported && deskOn && notif.reminders_enabled && !blocked;
+                const badge = !desk?.supported ? "NO DISPONIBLE" : blocked ? "BLOQUEADO" : !deskOn ? "OFF" : notif.reminders_enabled ? "ACTIVO" : "EN PAUSA";
+                const badgeCls = active ? "bg-emerald-100 text-emerald-700" : blocked ? "bg-red-100 text-red-600" : badge === "EN PAUSA" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500";
+                return (
+                  <div className={`rounded-2xl border transition-all ${active ? "border-indigo-300/70 bg-gradient-to-br from-indigo-50/70 to-white/40" : "border-slate-200/70 bg-white/40"}`}>
+                    <button type="button"
+                      data-testid="pc-channel-header"
+                      onClick={() => { setOpenChannel(isOpen ? null : "pc"); if (!isOpen) loadDesk(); }}
+                      className="w-full flex items-center gap-3 p-3.5 text-left">
+                      <div className="w-9 h-9 rounded-xl bg-white shadow-inner border border-indigo-200/60 flex items-center justify-center shrink-0">
+                        <Monitor size={16} className="text-indigo-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-black text-slate-800 truncate">{osName} · pop-up</p>
+                          <span data-testid="pc-status-badge" className={`text-[9px] font-black px-2 py-0.5 rounded-full ${badgeCls}`}>{badge}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 truncate">
+                          {active && desk?.next?.length
+                            ? <>Próximo aviso: <b>{fmtAt(desk.next[0].at)}</b></>
+                            : "Aviso emergente en este equipo · gratis, sin configurar"}
+                        </p>
+                      </div>
+                      <ChevronRight size={16} className={`text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                    </button>
+
+                    <AnimatePresence>
+                      {isOpen && (
+                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                          <div className="px-3.5 pb-3.5 space-y-3 border-t border-indigo-100/60 pt-3" data-testid="pc-channel-body">
+                            {!desk?.supported ? (
+                              <p className="text-[11px] text-slate-600 bg-slate-50 rounded-lg p-2.5">
+                                Este equipo no admite notificaciones emergentes.
+                              </p>
+                            ) : (
+                              <>
+                                {blocked && (
+                                  <div className="flex items-start gap-2 text-[11px] text-red-700 bg-red-50 rounded-xl p-2.5">
+                                    <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+                                    <div className="flex-1">
+                                      <p className="font-semibold">{desk.blocked_text || `${osName} está bloqueando las notificaciones.`}</p>
+                                      <button type="button" onClick={() => deskAction("settings")}
+                                        className="mt-1.5 inline-flex items-center gap-1 font-black underline">
+                                        <ExternalLink size={11} /> Abrir configuración de notificaciones
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="flex items-center justify-between bg-white/60 rounded-xl px-3 py-2">
+                                  <span className="text-xs font-bold text-slate-700">Mostrar pop-ups en este equipo</span>
+                                  <button type="button" data-testid="pc-desktop-toggle"
+                                    onClick={() => setNotif(p => ({ ...p, desktop_notifications: !deskOn }))}
+                                    className={`w-10 h-5 rounded-full transition-all relative ${deskOn ? "btn-primary" : "bg-slate-200"}`}>
+                                    <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${deskOn ? "left-[22px]" : "left-0.5"}`} />
+                                  </button>
+                                </div>
+
+                                {!notif.reminders_enabled && (
+                                  <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg p-2.5 font-semibold">
+                                    Activa «recordatorios automáticos» arriba y pulsa Guardar para empezar a recibir avisos.
+                                  </p>
+                                )}
+
+                                <div className="flex flex-wrap gap-2">
+                                  <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+                                    onClick={() => deskAction("test")} disabled={!!deskBusy}
+                                    data-testid="pc-test-btn"
+                                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg btn-primary text-white text-[11px] font-black disabled:opacity-60">
+                                    {deskBusy === "test" ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} Enviar prueba
+                                  </motion.button>
+                                  <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+                                    onClick={() => deskAction("next")} disabled={!!deskBusy}
+                                    data-testid="pc-notify-immediate-btn"
+                                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-indigo-300 text-indigo-700 text-[11px] font-black hover:bg-indigo-50 disabled:opacity-60">
+                                    {deskBusy === "next" ? <Loader2 size={12} className="animate-spin" /> : <BellRing size={12} />} Avisar próximo evento
+                                  </motion.button>
+                                </div>
+
+                                {active && desk?.next?.length > 0 && (
+                                  <div className="bg-white/50 rounded-xl p-2.5 space-y-1" data-testid="pc-next-list">
+                                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">Próximos avisos</p>
+                                    {desk.next.map((n, i) => (
+                                      <div key={i} className="flex items-center gap-2 text-[11px]">
+                                        <Clock size={11} className="text-indigo-500 shrink-0" />
+                                        <span className="font-bold text-slate-700 shrink-0">{fmtAt(n.at)}</span>
+                                        <span className="text-slate-500 truncate">{n.title}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {desk?.last_sent?.length > 0 && (
+                                  <p className="text-[10px] text-slate-500">
+                                    Último aviso: <b>{desk.last_sent[0].title}</b> — {desk.last_sent[0].text}
+                                  </p>
+                                )}
+                                {desk?.error && !blocked && (
+                                  <p className="text-[10px] text-red-600 font-semibold">{desk.error}</p>
+                                )}
+
+                                <p className="text-[10px] text-slate-500 leading-relaxed">
+                                  {isMac
+                                    ? "Los avisos salen mientras Cinema Reservas está abierta (aunque esté minimizada). Si estaba cerrada a la hora del aviso, te avisa al abrirla."
+                                    : <>Windows guarda los avisos programados{desk?.scheduled_in_windows ? <> (<b>{desk.scheduled_in_windows}</b> ahora)</> : null} y los muestra a su hora <b>aunque Cinema Reservas esté cerrada</b>, mientras el equipo esté encendido. Se quedan en pantalla hasta que los cierres.</>}
+                                </p>
+                                <p className="text-[10px] text-slate-500 leading-relaxed">
+                                  ¿No ves el pop-up? Si {osName} tiene <b>«No molestar»</b> activo (se activa solo en pantalla completa, juegos o ciertas horas), el aviso va directo al centro de notificaciones.
+                                  {!isMac && <> Para que salga igual, añade Cinema Reservas a las <b>notificaciones prioritarias</b>.</>}{" "}
+                                  <button type="button" data-testid="pc-open-settings" onClick={() => deskAction("settings")}
+                                    className="inline-flex items-center gap-1 font-black text-indigo-600 hover:text-indigo-700">
+                                    <ExternalLink size={10} /> Abrir configuración de notificaciones
+                                  </button>
+                                </p>
+                              </>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              })()}
 
               {/* ─── 1. Gmail (Google OAuth — auto login real) ─── */}
               {(() => {
@@ -1654,77 +1748,6 @@ export default function Settings() {
                 );
               })()}
 
-              {/* ─── 6. PC / navegador (notificaciones nativas) ─── */}
-              {(() => {
-                const isOpen = openChannel === "pc";
-                const active = notifPermission === "granted";
-                return (
-                  <div className={`rounded-2xl border transition-all ${active ? "border-indigo-300/70 bg-gradient-to-br from-indigo-50/70 to-white/40" : "border-slate-200/70 bg-white/40"}`}>
-                    <button type="button"
-                      data-testid="pc-channel-header"
-                      onClick={() => setOpenChannel(isOpen ? null : "pc")}
-                      className="w-full flex items-center gap-3 p-3.5 text-left">
-                      <div className="w-9 h-9 rounded-xl bg-white shadow-inner border border-indigo-200/60 flex items-center justify-center shrink-0">
-                        <Monitor size={16} className="text-indigo-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-black text-slate-800 truncate">PC / Navegador</p>
-                          <span data-testid="pc-status-badge"
-                            className={`text-[9px] font-black px-2 py-0.5 rounded-full ${active ? "bg-emerald-100 text-emerald-700" : notifPermission === "denied" ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-500"}`}>
-                            {active ? "ACTIVO" : notifPermission === "denied" ? "BLOQUEADO" : "OFF"}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 truncate">
-                          {language === "es" ? "Pop-ups nativos Windows/macOS · gratis" : "Native pop-ups · free"}
-                        </p>
-                      </div>
-                      <ChevronRight size={16} className={`text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
-                    </button>
-
-                    <AnimatePresence>
-                      {isOpen && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
-                          <div className="px-3.5 pb-3.5 space-y-2.5 border-t border-indigo-100/60 pt-3">
-                            {notifPermission === "denied" ? (
-                              <p className="text-[11px] text-red-600 font-semibold bg-red-50 rounded-lg p-2.5">
-                                {language === "es" ? "Permiso denegado. Ve a Configuración del navegador → Privacidad → Notificaciones y permite este sitio." : "Permission denied. Allow this site in browser settings."}
-                              </p>
-                            ) : notifPermission === "granted" ? (
-                              <div className="flex flex-wrap gap-2">
-                                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                                  onClick={handleNotifyImmediate} disabled={immediateLoading}
-                                  data-testid="pc-notify-immediate-btn"
-                                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg btn-primary text-white text-[11px] font-black disabled:opacity-60">
-                                  {immediateLoading ? <Loader2 size={12} className="animate-spin" /> : <BellRing size={12} />}
-                                  {language === "es" ? "Notificar próximo evento" : "Notify next event"}
-                                </motion.button>
-                                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                                  onClick={handleTestSystemNotif}
-                                  data-testid="pc-test-btn"
-                                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white border border-indigo-300 text-indigo-700 text-[11px] font-black hover:bg-indigo-50">
-                                  <Zap size={12} /> {language === "es" ? "Enviar prueba" : "Test"}
-                                </motion.button>
-                              </div>
-                            ) : (
-                              <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                                onClick={handleRequestPermission}
-                                data-testid="pc-enable-btn"
-                                className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg btn-primary text-white text-[11px] font-black">
-                                <BellRing size={12} /> {language === "es" ? "Activar notificaciones" : "Enable notifications"}
-                              </motion.button>
-                            )}
-                            <Link to="/base-datos" data-testid="desktop-app-link"
-                              className="inline-flex items-center gap-1.5 text-[10px] font-black text-indigo-600 hover:text-indigo-700">
-                              <Package size={11} /> {language === "es" ? "¿App de escritorio nativa? Ver paquete →" : "Native desktop app? See package →"}
-                            </Link>
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                );
-              })()}
             </div>
 
 

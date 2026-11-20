@@ -21,7 +21,6 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import IncidentsNotifier from "@/components/IncidentsNotifier";
 import { installGlobalErrorHandlers } from "@/lib/errorReporter";
 import { useEffect } from "react";
-import { useNotifications } from "@/hooks/useNotifications";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const queryClient = new QueryClient({
@@ -84,20 +83,8 @@ function AnimatedRoutes() {
 
 function ProtectedApp() {
   const { animations, appLocked } = useSettings();
-  const { start } = useNotifications();
-
-  useEffect(() => {
-    if ("Notification" in window && Notification.permission === "granted") {
-      const saved = localStorage.getItem("cp_notif_enabled");
-      if (saved !== "false") {
-        const reminderTime = localStorage.getItem("cp_reminder_time") || "09:00";
-        const reminderDays = localStorage.getItem("cp_reminder_days") || "3";
-        localStorage.setItem("cp_reminder_time", reminderTime);
-        localStorage.setItem("cp_reminder_days", reminderDays);
-        start(true);
-      }
-    }
-  }, [start]);
+  // Los recordatorios los envía el servidor como pop-ups nativos de Windows/macOS
+  // (ver /api/notifications/desktop/*); ya no dependen de los permisos del navegador.
 
   if (appLocked) {
     return (

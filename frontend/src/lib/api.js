@@ -127,6 +127,11 @@ export const sendTestReminder   = () => api.post("/reminders/send").then(r => r.
 export const testEmailConnection = () => api.post("/reminders/test-email").then(r => r.data);
 
 // Notifications
+// Pop-ups nativos de Windows/macOS (los muestra el servidor, y Windows los guarda programados)
+export const getDesktopNotifStatus = () => api.get("/notifications/desktop/status").then(r => r.data);
+export const testDesktopNotif     = () => api.post("/notifications/desktop/test").then(r => r.data);
+export const notifyNextDesktop    = () => api.post("/notifications/desktop/next").then(r => r.data);
+export const openNotifSettings    = () => api.post("/notifications/desktop/open-settings").then(r => r.data);
 export const getPendingNotifications = () => api.get("/notifications/pending").then(r => r.data);
 
 // Backup

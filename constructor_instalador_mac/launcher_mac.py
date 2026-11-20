@@ -66,10 +66,11 @@ def version() -> str:
 def ensure_app_files() -> None:
     """Copia app.py a la carpeta de datos (asi ROOT_DIR = esa carpeta) y crea el .env local."""
     APP_DIR.mkdir(parents=True, exist_ok=True)
-    src = BUNDLE / "app_src" / "app.py"
-    dst = APP_DIR / "app.py"
-    if not dst.exists() or dst.read_bytes() != src.read_bytes():
-        shutil.copy2(src, dst)
+    for name in ("app.py", "notificador.py"):
+        src = BUNDLE / "app_src" / name
+        dst = APP_DIR / name
+        if src.exists() and (not dst.exists() or dst.read_bytes() != src.read_bytes()):
+            shutil.copy2(src, dst)
     env = APP_DIR / ".env"
     if not env.exists():
         env.write_text("# Cinema Reservas - base de datos local (sin internet).\n"
