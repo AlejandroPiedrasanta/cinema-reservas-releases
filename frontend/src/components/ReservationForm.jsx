@@ -1,18 +1,17 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
-import { createReservation, updateReservation, getSocios } from "@/lib/api";
+import { createReservation, updateReservation, getSocios, getReservations } from "@/lib/api";
 import {
   ArrowLeft, X, Sparkles, User, Phone, Mail, Calendar as CalIcon, Clock, MapPin,
   Users, DollarSign, Package, StickyNote, PartyPopper, Heart, Cake, Briefcase,
   Mic2, Star, CheckCircle2, Loader2, Wallet, Tag, Pencil, RotateCcw, Zap,
-  Camera, Video
+  Camera, Video, Check, AlertTriangle, ChevronLeft, ChevronRight, ChevronDown
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, MotionConfig, animate as fmAnimate } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
 import { useSettings } from "@/context/SettingsContext";
-import { getEventTypeName } from "@/lib/eventConfig";
+import { getEventTypeName, getEventConfig } from "@/lib/eventConfig";
 import { celebrateReservation, celebratePayment, celebrateFullPayment } from "@/lib/celebrations";
-import { PrettyDatePicker, PrettyTimePicker } from "@/components/PrettyDateTime";
 import { apiMsg } from "@/lib/apiMsg";
 
 const EVENT_TYPES = [
@@ -33,7 +32,7 @@ const PACKAGES = [
 
 export default function ReservationForm({ reservation, onClose, onSaved }) {
   const { toast } = useToast();
-  const { tr, activeStatuses, formFieldsVisibility, currencySymbol, formatCurrency, currencyInfo } = useSettings();
+  const { tr, activeStatuses, formFieldsVisibility, currencySymbol, formatCurrency, currencyInfo, animations } = useSettings();
   const f = tr.form;
   const ff = formFieldsVisibility || {};
   const isEdit = !!reservation;
@@ -50,7 +49,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
   );
 
   const [form, setForm] = useState({
-    client_name: "Desconocido", client_phone: "", client_email: "",
+    client_name: "", client_phone: "", client_email: "",
     event_type: "Boda", event_date: "", event_time: "",
     venue: "", guests_count: "", total_amount: "",
     advance_paid: "0", status: "Reservado", notes: "",
@@ -220,650 +219,568 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
     } finally { setSaving(false); }
   };
 
-  const title = isEdit ? "Editar Reserva" : "Nueva Reserva";
+  const title = isEdit ? "Editar reserva" : "Nueva reserva";
   const submitLabel = saving ? "Guardando…" : isEdit ? "Guardar cambios" : "Crear reserva";
+  const noReq = (s) => String(s || "").replace(/\s*\*\s*$/, "");
 
-  // Balance
-  const balance = Math.max(0, (parseFloat(form.total_amount) || 0) - (parseFloat(form.advance_paid) || 0));
-  const progress = form.total_amount ? Math.min(100, ((parseFloat(form.advance_paid) || 0) / parseFloat(form.total_amount)) * 100) : 0;
+  // Saldo
+  const totalNum = parseFloat(form.total_amount) || 0;
+  const advNum = parseFloat(form.advance_paid) || 0;
+  const balance = Math.max(0, totalNum - advNum);
+  const progress = totalNum ? Math.min(100, (advNum / totalNum) * 100) : 0;
 
-  const stagger = {
-    hidden:  { opacity: 0, y: 12 },
-    visible: (i) => ({ opacity: 1, y: 0, transition: { delay: 0.05 * i, duration: 0.4, ease: [0.22, 1, 0.36, 1] } }),
+  // Otras reservas (para avisar si el día ya está ocupado y sugerir clientes anteriores)
+  const [others, setOthers] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    getReservations().then((l) => { if (alive) setOthers(Array.isArray(l) ? l : []); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const busy = useMemo(() => {
+    const m = {};
+    others.forEach((r) => {
+      if (!r.event_date || r.status === "Cancelado" || (isEdit && r.id === reservation?.id)) return;
+      (m[r.event_date] ||= []).push(r);
+    });
+    return m;
+  }, [others, isEdit, reservation]);
+  const sameDay = form.event_date ? (busy[form.event_date] || []) : [];
+  const clients = useMemo(() => {
+    const seen = new Map();
+    others.forEach((r) => {
+      if (r.client_name && r.client_name !== "Desconocido" && !seen.has(r.client_name))
+        seen.set(r.client_name, { phone: r.client_phone || "", email: r.client_email || "" });
+    });
+    return [...seen.entries()].map(([name, v]) => ({ name, ...v }));
+  }, [others]);
+
+  // Atajos: Esc cierra · Ctrl+Enter guarda
+  const submitRef = useRef(handleSubmit);
+  submitRef.current = handleSubmit;
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape" && !document.querySelector("[data-partner-popup],[data-rf-popup]")) onClose();
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submitRef.current(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const setAdvanceQuick = (ratio) => {
+    if (!totalNum) return;
+    const v = String(Math.round(totalNum * ratio * 100) / 100);
+    setForm((p) => ({ ...p, advance_paid: v, status: ratio >= 1 ? "Pagado" : (p.status === "Pagado" ? "Reservado" : p.status) }));
   };
 
+  // Identidad del evento + lista de lo obligatorio (para animaciones y resumen en vivo)
+  const evCfg = getEventConfig(form.event_type);
+  const EvIcon = evCfg.icon || Sparkles;
+  const reqDone = [
+    { k: "client", label: "Cliente", ok: !!form.client_name.trim() },
+    { k: "date", label: "Fecha", ok: !!form.event_date },
+    { k: "total", label: "Monto", ok: totalNum > 0 },
+  ];
+  const allReady = reqDone.every((r) => r.ok);
+  const fullyPaid = totalNum > 0 && progress >= 100;
+  const summaryBits = [getEventTypeName(form.event_type), form.event_date && fechaCorta(form.event_date)].filter(Boolean).join(" · ");
+
   return createPortal(
+    <MotionConfig reducedMotion={animations === false ? "always" : "user"}>
     <AnimatePresence>
       <motion.div
-        key="ultra-overlay"
+        key="rf-overlay"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        transition={{ duration: 0.25 }}
-        className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto py-6 px-4 ultra-scroll"
-        style={{
-          background: "radial-gradient(1200px 700px at 20% 10%, rgba(139,92,246,0.35), transparent 60%), radial-gradient(1000px 600px at 80% 90%, rgba(236,72,153,0.28), transparent 60%), rgba(3, 6, 23, 0.75)",
-          backdropFilter: "blur(24px)",
-          WebkitBackdropFilter: "blur(24px)",
-        }}
+        transition={{ duration: 0.18 }}
+        className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto py-6 px-4 bg-slate-900/40"
         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         data-testid="reservation-form"
       >
         <motion.div
-          initial={{ opacity: 0, scale: 0.94, y: 28 }}
+          initial={{ opacity: 0, scale: 0.96, y: 22 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.94, y: 16 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="relative w-full max-w-4xl max-h-[95vh] flex flex-col rounded-[28px] overflow-hidden ultra-glow-border"
-          style={{
-            background: "linear-gradient(160deg, rgba(15,10,40,0.92) 0%, rgba(23,16,58,0.92) 50%, rgba(30,15,55,0.94) 100%)",
-            boxShadow: "0 40px 90px -20px rgba(139,92,246,0.5), 0 20px 50px -20px rgba(236,72,153,0.35)",
-          }}
+          exit={{ opacity: 0, scale: 0.97, y: 10, transition: { duration: 0.16 } }}
+          transition={{ type: "spring", stiffness: 340, damping: 30 }}
+          className="cp-rf relative w-full max-w-5xl flex flex-col rounded-[28px] bg-white border border-white shadow-[0_30px_80px_-24px_rgba(15,23,42,0.45)]"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Aurora blobs */}
-          <div className="ultra-aurora-blob" style={{ width: 340, height: 340, top: -100, left: -80, background: "radial-gradient(circle, #a78bfa, transparent)" }} />
-          <div className="ultra-aurora-blob" style={{ width: 300, height: 300, bottom: -80, right: -60, background: "radial-gradient(circle, #ec4899, transparent)", animationDelay: "-6s" }} />
-          <div className="ultra-aurora-blob" style={{ width: 260, height: 260, top: "40%", right: "-10%", background: "radial-gradient(circle, #06b6d4, transparent)", animationDelay: "-12s" }} />
-          <div className="ultra-grid" />
-
-          {/* Header */}
-          <div className="relative z-10 flex items-center justify-between px-7 py-4 border-b border-white/10 gap-3 flex-wrap">
-            <div className="flex items-center gap-3 min-w-0">
-              <motion.button
-                whileHover={{ scale: 1.05, x: -2 }} whileTap={{ scale: 0.94 }}
-                type="button" onClick={onClose}
-                className="ultra-secondary"
-                style={{ padding: "8px 14px", fontSize: 12 }}
-                data-testid="cancel-form-btn"
-              >
-                <ArrowLeft size={12} /> Cancelar
-              </motion.button>
-
+          <button type="button" onClick={onClose} aria-label="Cerrar" data-testid="cancel-form-btn"
+            className="absolute top-5 right-5 z-20 w-9 h-9 rounded-full grid place-items-center text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 hover:rotate-90 transition-transform duration-300">
+            <X size={18} />
+          </button>
+          <div className="grid md:grid-cols-[minmax(0,1fr)_300px] lg:grid-cols-[minmax(0,1fr)_320px]">
+            {/* Columna izquierda: evento y cliente */}
+            <motion.form onSubmit={handleSubmit} variants={STAGGER} initial="hidden" animate="show" className="px-7 py-6 space-y-5 min-w-0">
               {isEdit ? (
                 <div className="flex items-center gap-3 min-w-0">
-                  <motion.div
-                    initial={{ scale: 0.6, rotate: -12, opacity: 0 }}
-                    animate={{ scale: 1, rotate: 0, opacity: 1 }}
-                    transition={{ type: "spring", stiffness: 260, damping: 18 }}
-                    className="edit-avatar shrink-0"
-                    data-testid="edit-avatar"
-                  >
+                  <div className="w-10 h-10 rounded-2xl grid place-items-center text-white text-sm font-black shrink-0"
+                    style={{ background: "linear-gradient(135deg, var(--t-from,#8b5cf6), var(--t-to,#ec4899))" }} data-testid="edit-avatar">
                     {clientInitials}
-                  </motion.div>
+                  </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <motion.span
-                        initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.1 }}
-                        className="edit-badge"
-                        data-testid="edit-mode-badge"
-                      >
-                        <Pencil size={10} /> Editando
-                      </motion.span>
-                      <AnimatePresence mode="wait">
-                        <motion.span
-                          key={dirtyFields.length === 0 ? "clean" : "dirty"}
-                          initial={{ opacity: 0, y: -4, scale: 0.9 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, y: 4, scale: 0.9 }}
-                          transition={{ duration: 0.22 }}
-                          className={`edit-counter ${dirtyFields.length === 0 ? "zero" : ""}`}
-                          data-testid="edit-changes-counter"
-                        >
-                          <Zap size={10} />
-                          {dirtyFields.length === 0 ? (
-                            <>Sin cambios</>
-                          ) : (
-                            <>
-                              <span className="num">{dirtyFields.length}</span>
-                              cambio{dirtyFields.length === 1 ? "" : "s"}
-                            </>
-                          )}
-                        </motion.span>
-                      </AnimatePresence>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-violet-600" data-testid="edit-mode-badge">Editando</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${dirtyFields.length ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"}`} data-testid="edit-changes-counter">
+                        {dirtyFields.length === 0 ? "Sin cambios" : `${dirtyFields.length} cambio${dirtyFields.length === 1 ? "" : "s"}`}
+                      </span>
+                      {dirtyFields.length > 0 && (
+                        <button type="button" onClick={handleRevert} data-testid="revert-changes-btn"
+                          className="flex items-center gap-1 text-[10px] font-bold text-slate-500 hover:text-slate-800">
+                          <RotateCcw size={11} /> Descartar
+                        </button>
+                      )}
                     </div>
-                    <h2 className="ultra-title truncate" style={{ fontSize: 20, maxWidth: 320 }} data-testid="edit-client-name">
-                      {originalRef.current?.client_name || "Reserva"}
-                    </h2>
+                    <h2 className="text-lg font-black text-slate-900 truncate" data-testid="edit-client-name">{originalRef.current?.client_name || "Reserva"}</h2>
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center gap-3.5">
-                  <div className="relative w-9 h-9 rounded-xl flex items-center justify-center"
-                       style={{ background: "linear-gradient(135deg, #8b5cf6, #ec4899)", boxShadow: "0 8px 20px -6px rgba(167,139,250,0.7)" }}>
-                    <Sparkles size={16} className="text-white ultra-icon-float" />
+                <motion.div variants={ITEM} className="flex items-center gap-3 pr-12 md:pr-0 min-w-0">
+                  <div className="relative w-11 h-11 shrink-0">
+                    <AnimatePresence initial={false}>
+                      <motion.div key={form.event_type}
+                        initial={{ scale: 0.3, rotate: -40, opacity: 0 }} animate={{ scale: 1, rotate: 0, opacity: 1 }} exit={{ scale: 0.3, rotate: 40, opacity: 0 }}
+                        transition={{ type: "spring", stiffness: 420, damping: 20 }}
+                        className="absolute inset-0 rounded-2xl grid place-items-center text-white"
+                        style={{ background: evCfg.fg, boxShadow: `0 10px 24px -10px ${evCfg.fg}` }}>
+                        <EvIcon size={20} />
+                      </motion.div>
+                    </AnimatePresence>
                   </div>
-                  <h2 className="ultra-title" style={{ fontSize: 18 }}>{title}</h2>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <AnimatePresence>
-                {isEdit && dirtyFields.length > 0 && (
-                  <motion.button
-                    key="revert"
-                    initial={{ opacity: 0, x: 10, scale: 0.9 }}
-                    animate={{ opacity: 1, x: 0, scale: 1 }}
-                    exit={{ opacity: 0, x: 10, scale: 0.9 }}
-                    whileHover={{ y: -1 }} whileTap={{ scale: 0.94 }}
-                    type="button" onClick={handleRevert}
-                    className="revert-btn"
-                    data-testid="revert-changes-btn"
-                  >
-                    <RotateCcw size={12} /> Descartar
-                  </motion.button>
-                )}
-              </AnimatePresence>
-              <motion.button
-                whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
-                type="button" onClick={handleSubmit} disabled={saving || (isEdit && dirtyFields.length === 0)}
-                className={`ultra-cta ${isEdit && dirtyFields.length > 0 ? "has-changes" : ""}`}
-                style={{ padding: "10px 20px", fontSize: 13 }}
-                data-testid="submit-form-btn"
-              >
-                {saving ? <Loader2 size={14} className="animate-spin inline mr-1.5" /> : <CheckCircle2 size={14} className="inline mr-1.5" />}
-                {submitLabel}
-              </motion.button>
-              <button type="button" onClick={onClose} className="ultra-secondary" style={{ padding: "8px", borderRadius: "50%" }}>
-                <X size={13} />
-              </button>
-            </div>
-          </div>
-
-          {/* Form body */}
-          <form onSubmit={handleSubmit} className="relative z-10 px-7 py-5 ultra-compact flex-1 overflow-hidden">
-            {/* Diff strip — shows changed fields as chips */}
-            <AnimatePresence>
-              {isEdit && dirtyFields.length > 0 && (
-                <motion.div
-                  key="diff-strip"
-                  initial={{ opacity: 0, y: -8, height: 0, marginBottom: 0 }}
-                  animate={{ opacity: 1, y: 0, height: "auto", marginBottom: 14 }}
-                  exit={{ opacity: 0, y: -8, height: 0, marginBottom: 0 }}
-                  transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-                  className="edit-diff-strip"
-                  data-testid="edit-diff-strip"
-                >
-                  <span className="text-[10px] font-black tracking-widest uppercase text-amber-200/80 mr-1 flex items-center gap-1.5">
-                    <Zap size={11} /> Modificado:
-                  </span>
-                  {dirtyFields.map((k, i) => {
-                    const meta = FIELD_META[k];
-                    const Icon = meta?.icon || Pencil;
-                    return (
-                      <motion.span
-                        key={k}
-                        initial={{ opacity: 0, scale: 0.7, y: -4 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.7 }}
-                        transition={{ delay: i * 0.03, type: "spring", stiffness: 320, damping: 20 }}
-                        className="edit-diff-chip"
-                        data-testid={`diff-chip-${k}`}
-                      >
-                        <Icon size={10} /> {meta?.label || k}
-                      </motion.span>
-                    );
-                  })}
+                  <div className="min-w-0">
+                    <h2 className="text-lg font-black text-slate-900 leading-tight">{title}</h2>
+                    <p className="text-xs font-semibold truncate transition-colors duration-300" style={{ color: evCfg.fg }} data-testid="form-live-summary">
+                      <AnimatePresence mode="wait" initial={false}>
+                        <motion.span key={summaryBits} className="inline-block" initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }} transition={{ duration: 0.16 }}>{summaryBits}</motion.span>
+                      </AnimatePresence>
+                      {form.client_name.trim() && <span className="text-slate-500"> · {form.client_name.trim()}</span>}
+                    </p>
+                  </div>
                 </motion.div>
               )}
-            </AnimatePresence>
 
-            {/* SECTION 1 — Cliente */}
-            <motion.div variants={stagger} initial="hidden" animate="visible" custom={0} className="mb-4">
-              <div className="ultra-section-header"><User size={11} /> Datos del cliente</div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-                <UField icon={User}  label={`${f.clientName} *`} dirty={isDirtyField("client_name")} testId="field-client-name">
-                  <input value={form.client_name} onChange={set("client_name")} placeholder="María García" required
-                         data-testid="input-client-name" />
-                </UField>
-                {ff.phone !== false && (
-                  <UField icon={Phone} label={f.phone} dirty={isDirtyField("client_phone")} testId="field-phone">
-                    <input value={form.client_phone} onChange={set("client_phone")} placeholder="+502 1234 5678"
-                           data-testid="input-phone" />
-                  </UField>
-                )}
-                {ff.email !== false && (
-                  <UField icon={Mail} label={f.email} dirty={isDirtyField("client_email")} testId="field-email">
-                    <input type="email" value={form.client_email} onChange={set("client_email")} placeholder="correo@email.com"
-                           data-testid="input-email" />
-                  </UField>
-                )}
-              </div>
-            </motion.div>
-
-            {/* SECTION 2 — Tipo de evento (choice cards) */}
-            <motion.div variants={stagger} initial="hidden" animate="visible" custom={1} className="mb-4">
-              <div className="ultra-section-header">
-                <Sparkles size={11} /> Tipo de evento
-                {isDirtyField("event_type") && (
-                  <motion.span
-                    initial={{ scale: 0 }} animate={{ scale: 1 }}
-                    className="ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/50 text-amber-200 text-[9px] tracking-wider"
-                    data-testid="event-type-dirty-badge"
-                  >
-                    <Zap size={8} /> Cambiado
-                  </motion.span>
-                )}
-              </div>
-              <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-                {EVENT_TYPES.map((t) => {
-                  const Icon = t.icon;
-                  const active = form.event_type === t.key;
-                  const wasOriginal = isEdit && originalRef.current?.event_type === t.key;
-                  return (
-                    <motion.button
-                      key={t.key} type="button"
-                      whileHover={{ y: -3 }} whileTap={{ scale: 0.96 }}
-                      onClick={() => setForm(p => ({ ...p, event_type: t.key }))}
-                      className={`ultra-choice ${active ? "is-active" : ""}`}
-                      data-testid={`event-type-${t.key.toLowerCase().replace(/\s/g,"-")}`}
-                      style={wasOriginal && !active ? { outline: "1.5px dashed rgba(167,139,250,0.55)", outlineOffset: 2 } : undefined}
-                    >
-                      <Icon size={22} strokeWidth={2.2} />
-                      <span className="text-[11px]">{getEventTypeName(t.key)}</span>
-                    </motion.button>
-                  );
-                })}
-              </div>
-            </motion.div>
-
-            {/* SECTION 3 — Detalles evento */}
-            <motion.div variants={stagger} initial="hidden" animate="visible" custom={2} className="mb-4">
-              <div className="ultra-section-header"><CalIcon size={11} /> Detalles del evento</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                <div className="relative">
-                  <label className="ultra-label"><CalIcon size={12} /> {f.eventDate} *
-                    {isDirtyField("event_date") && <Zap size={10} className="text-amber-300" />}
-                  </label>
-                  <PrettyDatePicker value={form.event_date} onChange={set("event_date")} testId="input-event-date-pretty" />
-                  {isDirtyField("event_date") && <span className="dirty-dot" style={{ top: 22, right: -3 }} />}
-                  {/* Hidden native for tests */}
-                  <input type="date" value={form.event_date} onChange={set("event_date")} required data-testid="input-event-date" className="hidden" />
-                </div>
-                {ff.time !== false && (
-                  <div className="relative">
-                    <label className="ultra-label"><Clock size={12} /> {f.time}
-                      {isDirtyField("event_time") && <Zap size={10} className="text-amber-300" />}
-                    </label>
-                    <PrettyTimePicker value={form.event_time} onChange={set("event_time")} testId="input-event-time-pretty" />
-                    {isDirtyField("event_time") && <span className="dirty-dot" style={{ top: 22, right: -3 }} />}
-                    <input type="time" value={form.event_time} onChange={set("event_time")} data-testid="input-event-time" className="hidden" />
-                  </div>
-                )}
-                {/* Compatibilidad con tests: selects ocultos */}
-                <select value={form.event_type} onChange={set("event_type")} data-testid="input-event-type" className="hidden">
-                  {EVENT_TYPES.map(t => <option key={t.key} value={t.key}>{getEventTypeName(t.key)}</option>)}
-                </select>
-                <select value={form.status} onChange={setStatus} data-testid="input-status" className="hidden">
-                  {STATUS_OPTIONS.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 mt-2.5">
-                {ff.venue !== false && (
-                  <UField icon={MapPin} label={f.venue} dirty={isDirtyField("venue")} testId="field-venue">
-                    <input value={form.venue} onChange={set("venue")} placeholder="Salón / Hotel / Ubicación"
-                           data-testid="input-venue" />
-                  </UField>
-                )}
-                {!isEdit && (
-                  <PartnerPickerField
-                    socios={socios}
-                    value={partnerSocioId}
-                    onChange={setPartnerSocioId}
-                    payment={partnerPayment}
-                    onPaymentChange={setPartnerPayment}
-                    currencySymbol={currencySymbol}
-                  />
-                )}
-                {ff.guests !== false && (
-                  <UField icon={Users} label={f.guests} dirty={isDirtyField("guests_count")} testId="field-guests">
-                    <input type="number" value={form.guests_count} onChange={set("guests_count")} placeholder="150" min="0"
-                           data-testid="input-guests" />
-                  </UField>
-                )}
-              </div>
-            </motion.div>
-
-            {/* SECTION 5 — Dinero */}
-            <motion.div variants={stagger} initial="hidden" animate="visible" custom={4} className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="ultra-section-header" style={{ marginBottom: 0 }}><Wallet size={11} /> Información financiera</div>
-                {/* Toggle Reservado / Pagado */}
-                <div className="inline-flex p-1 rounded-full border border-white/15 bg-white/5 backdrop-blur">
-                  {STATUS_OPTIONS.map((s) => {
-                    const active = form.status === s.key;
+              <motion.div variants={ITEM}>
+                <RLabel>{noReq(f.eventType) || "Tipo de evento"}</RLabel>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {EVENT_TYPES.map((t) => {
+                    const c = getEventConfig(t.key); const Icon = c.icon || t.icon;
+                    const active = form.event_type === t.key;
                     return (
-                      <button
-                        key={s.key} type="button"
-                        onClick={() => setStatus({ target: { value: s.key } })}
-                        data-testid={`status-toggle-${s.key.toLowerCase()}`}
-                        className="relative px-4 py-1.5 rounded-full text-[11px] font-black tracking-wider uppercase transition-all"
-                        style={{
-                          color: active ? "#fff" : "rgba(255,255,255,0.55)",
-                          background: active
-                            ? (s.key === "Pagado"
-                                ? "linear-gradient(135deg, #10b981, #06b6d4)"
-                                : "linear-gradient(135deg, #8b5cf6, #ec4899)")
-                            : "transparent",
-                          boxShadow: active ? "0 6px 18px -4px rgba(139,92,246,0.55)" : "none",
-                        }}
-                      >
-                        {s.label}
-                      </button>
+                      <motion.button key={t.key} type="button" whileTap={{ scale: 0.95 }} whileHover={{ y: -1 }}
+                        onClick={() => setForm((p) => ({ ...p, event_type: t.key }))}
+                        data-testid={`event-type-${t.key.toLowerCase().replace(/\s/g, "-")}`}
+                        className={`relative flex items-center justify-center rounded-2xl border px-2 py-2 text-[11px] font-bold leading-tight text-center transition-colors ${active ? "border-transparent" : "border-slate-200 text-slate-500 hover:border-slate-300"}`}
+                        style={active ? { color: c.fg } : undefined}>
+                        {active && (
+                          <motion.span layoutId="rf-type-pill" className="absolute inset-0 rounded-2xl"
+                            style={{ background: `${c.fg}14`, border: `1.5px solid ${c.fg}`, boxShadow: `0 0 0 3px ${c.fg}22` }}
+                            transition={{ type: "spring", stiffness: 480, damping: 34 }} />
+                        )}
+                        <span className="relative z-10 flex items-center gap-1.5">
+                          <motion.span className="flex" animate={active ? { rotate: [0, -14, 10, 0], scale: [1, 1.25, 1] } : { rotate: 0, scale: 1 }} transition={{ duration: 0.45 }}>
+                            <Icon size={14} className="shrink-0" />
+                          </motion.span>
+                          <span>{getEventTypeName(t.key)}</span>
+                        </span>
+                      </motion.button>
                     );
                   })}
                 </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-                <UField icon={CurrencyGlyph} label={`${f.totalAmount} *`} dirty={isDirtyField("total_amount")} testId="field-total">
-                  <input type="number" value={form.total_amount} onChange={setTotal} placeholder="50,000" min="0" step="0.01" required
-                         data-testid="input-total" />
-                </UField>
-                {ff.advance !== false && (
-                  <UField icon={Wallet} label={f.advancePaid} dirty={isDirtyField("advance_paid")} testId="field-advance">
-                    <input type="number" value={form.advance_paid} onChange={set("advance_paid")} placeholder="10,000" min="0" step="0.01"
-                           data-testid="input-advance" />
-                  </UField>
+                <select value={form.event_type} onChange={set("event_type")} data-testid="input-event-type" className="hidden">
+                  {EVENT_TYPES.map((t) => <option key={t.key} value={t.key}>{getEventTypeName(t.key)}</option>)}
+                </select>
+              </motion.div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <RField label={noReq(f.clientName)} req dirty={isDirtyField("client_name")} testId="field-client-name">
+                  <ClientAutocomplete value={form.client_name} clients={clients}
+                    onChange={(v) => setForm((p) => ({ ...p, client_name: v }))}
+                    onPick={(c) => setForm((p) => ({ ...p, client_name: c.name, client_phone: p.client_phone || c.phone, client_email: p.client_email || c.email }))} />
+                </RField>
+                {ff.phone !== false && (
+                  <RField label={f.phone} dirty={isDirtyField("client_phone")} testId="field-phone">
+                    <RInput icon={Phone} value={form.client_phone} onChange={set("client_phone")} placeholder="5555 1234" data-testid="input-phone" />
+                  </RField>
                 )}
-                <div className="ultra-field flex flex-col justify-end">
-                  <label className="ultra-label"><CurrencyGlyph size={12} /> Saldo</label>
-                  <div className="relative rounded-2xl px-4 py-3.5 border border-white/15 bg-white/5 overflow-hidden">
-                    <div className="text-white font-black text-lg tracking-tight">
-                      {formatCurrency(balance)}
-                    </div>
-                    <div className="mt-2 h-1.5 rounded-full bg-white/10 overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }} animate={{ width: `${progress}%` }}
-                        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                        className="h-full rounded-full"
-                        style={{ background: "linear-gradient(90deg, #8b5cf6, #ec4899, #f59e0b)" }}
-                      />
-                    </div>
-                    <div className="absolute inset-0 ultra-sweep" style={{ opacity: 0.35 }} />
-                  </div>
-                </div>
+                <RField label={noReq(f.eventDate)} req dirty={isDirtyField("event_date")} testId="field-date">
+                  <RDateField value={form.event_date} busy={busy} onChange={(v) => setForm((p) => ({ ...p, event_date: v }))} />
+                  <input type="date" value={form.event_date} onChange={set("event_date")} required data-testid="input-event-date" className="hidden" />
+                </RField>
+                {ff.time !== false && (
+                  <RField label={f.time} dirty={isDirtyField("event_time")} testId="field-time">
+                    <RInput icon={Clock} type="time" value={form.event_time} onChange={set("event_time")} data-testid="input-event-time" />
+                  </RField>
+                )}
+                {ff.venue !== false && (
+                  <RField label={f.venue} dirty={isDirtyField("venue")} testId="field-venue">
+                    <RInput icon={MapPin} value={form.venue} onChange={set("venue")} placeholder="Salón, hotel o dirección" data-testid="input-venue" />
+                  </RField>
+                )}
+                {!isEdit && (
+                  <motion.div variants={ITEM}>
+                    <PartnerPickerField socios={socios} value={partnerSocioId} onChange={setPartnerSocioId}
+                      payment={partnerPayment} onPaymentChange={setPartnerPayment} currencySymbol={currencySymbol} />
+                  </motion.div>
+                )}
+                {ff.email !== false && (
+                  <RField label={f.email} dirty={isDirtyField("client_email")} testId="field-email">
+                    <RInput icon={Mail} type="email" value={form.client_email} onChange={set("client_email")} placeholder="correo@email.com" data-testid="input-email" />
+                  </RField>
+                )}
+                {ff.guests !== false && (
+                  <RField label={f.guests} dirty={isDirtyField("guests_count")} testId="field-guests">
+                    <RInput icon={Users} type="number" min="0" value={form.guests_count} onChange={set("guests_count")} placeholder="150" data-testid="input-guests" />
+                  </RField>
+                )}
               </div>
-            </motion.div>
 
-            {/* Hidden select for test compatibility */}
-            <select value={form.package_type} onChange={set("package_type")} data-testid="input-package" className="hidden">
-              <option value="">— Sin paquete —</option>
-              <option value="Básico">Básico</option>
-              <option value="Intermedio">Intermedio</option>
-              <option value="Completo">Completo</option>
-            </select>
-            <input value={form.notes} onChange={set("notes")} data-testid="input-notes" className="hidden" />
-          </form>
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>,
-    document.body
-  );
-}
+              <AnimatePresence mode="wait" initial={false}>
+                {form.event_date && (sameDay.length ? (
+                  <motion.p key={"busy" + form.event_date} data-testid="date-busy-warning"
+                    initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0, x: [0, -6, 6, -3, 3, 0] }} exit={{ opacity: 0, y: -4 }}
+                    transition={{ duration: 0.45 }}
+                    className="cp-rf-note flex items-center gap-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                    <AlertTriangle size={14} className="shrink-0" /> Ese día ya tienes {sameDay.length === 1 ? `1 evento (${sameDay[0].client_name})` : `${sameDay.length} eventos`}
+                  </motion.p>
+                ) : (
+                  <motion.p key={"free" + form.event_date}
+                    initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.22 }}
+                    className="cp-rf-note flex items-center gap-2 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+                    <motion.span className="flex" initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 500, damping: 18, delay: 0.08 }}><CheckCircle2 size={14} /></motion.span> Día libre, no tienes otros eventos
+                  </motion.p>
+                ))}
+              </AnimatePresence>
 
-// Reusable ultra field with icon
-function UField({ icon: Icon, label, children, dirty = false, testId }) {
-  return (
-    <div className={`ultra-field ${dirty ? "is-dirty" : ""}`} data-testid={testId}>
-      <label className="ultra-label">
-        {Icon && <Icon size={12} />}
-        {label}
-      </label>
-      <div className="relative">
-        {Icon && <Icon size={16} className="ultra-field-icon" />}
-        {children}
-        {dirty && <span className="dirty-dot" data-testid="dirty-dot" />}
-      </div>
-    </div>
-  );
-}
+              {/* Compatibilidad: campos ocultos */}
+              <select value={form.package_type} onChange={set("package_type")} data-testid="input-package" className="hidden">
+                <option value="">— Sin paquete —</option>
+                <option value="Básico">Básico</option>
+                <option value="Intermedio">Intermedio</option>
+                <option value="Completo">Completo</option>
+              </select>
+              <input value={form.notes} onChange={set("notes")} data-testid="input-notes" className="hidden" />
+            </motion.form>
 
-// Socio/Fotógrafo picker — se muestra al lado de "Lugar del evento" al crear una reserva
-function PartnerPickerField({ socios, value, onChange, payment, onPaymentChange, currencySymbol }) {
-  const [open, setOpen] = useState(false);
-  const [payOpen, setPayOpen] = useState(false);
-  const [rect, setRect] = useState(null); // bounding rect del botón para posicionar el popup
-  const wrapRef = useRef(null);
-  const btnRef  = useRef(null);
-  const selected = socios.find(s => s.id === value);
-  const ROLE_ICON = { "Fotógrafo": Camera, "Videógrafo": Video, "Asistente": Users };
-
-  // Recalcula posición cuando abre / al hacer scroll o resize
-  const updateRect = () => {
-    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
-  };
-  useEffect(() => {
-    if (!open && !payOpen) return;
-    updateRect();
-    window.addEventListener("scroll", updateRect, true);
-    window.addEventListener("resize", updateRect);
-    return () => {
-      window.removeEventListener("scroll", updateRect, true);
-      window.removeEventListener("resize", updateRect);
-    };
-  }, [open, payOpen]);
-
-  // Cerrar dropdowns al hacer click fuera
-  useEffect(() => {
-    if (!open && !payOpen) return;
-    const onDoc = (e) => {
-      const inWrap = wrapRef.current && wrapRef.current.contains(e.target);
-      const inPop  = e.target.closest?.("[data-partner-popup]");
-      if (!inWrap && !inPop) { setOpen(false); setPayOpen(false); }
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open, payOpen]);
-
-  const handlePick = (id) => {
-    onChange(id);
-    setOpen(false);
-    if (id) setTimeout(() => { updateRect(); setPayOpen(true); }, 120);
-  };
-
-  // Estilo común para popups renderizados por portal (fixed, con coords del botón)
-  const popupPos = rect ? {
-    position: "fixed",
-    top:  rect.bottom + 4,
-    left: rect.left,
-    width: rect.width,
-    zIndex: 1000,
-  } : { display: "none" };
-
-  return (
-    <div className="ultra-field" data-testid="field-partner" ref={wrapRef}>
-      <label className="ultra-label">
-        <Camera size={12} /> Fotógrafo / Socio
-        {selected && payment && parseFloat(payment) > 0 && (
-          <span className="ml-auto text-[9px] font-black text-emerald-300 normal-case tracking-normal">
-            {currencySymbol}{parseFloat(payment).toLocaleString()}
-          </span>
-        )}
-      </label>
-
-      <div className="relative">
-        <Camera size={16} className="ultra-field-icon" />
-        <button
-          ref={btnRef}
-          type="button"
-          onClick={() => { updateRect(); setOpen(o => !o); setPayOpen(false); }}
-          data-testid="partner-picker-btn"
-          className="w-full text-left"
-          style={{
-            padding: "11px 14px 11px 40px",
-            background: selected ? "rgba(139,92,246,0.14)" : "rgba(255,255,255,0.06)",
-            border: `1.5px solid ${selected ? "rgba(167,139,250,0.55)" : "rgba(255,255,255,0.14)"}`,
-            color: "#fff",
-            borderRadius: 13,
-            fontSize: 13.5,
-            fontWeight: 600,
-            lineHeight: 1.2,
-            minHeight: 44,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            cursor: "pointer",
-            transition: "all 0.25s cubic-bezier(0.22,1,0.36,1)",
-          }}
-        >
-          {selected ? (
-            <>
-              {selected.photo && selected.photo_content_type ? (
-                <img
-                  src={`data:${selected.photo_content_type};base64,${selected.photo}`}
-                  alt=""
-                  className="w-5 h-5 rounded-md object-cover shrink-0"
-                />
-              ) : (
-                <div
-                  className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 text-[9px] font-black text-white"
-                  style={{ background: "linear-gradient(135deg,#8b5cf6,#ec4899)" }}
-                >
-                  {selected.name?.charAt(0).toUpperCase()}
-                </div>
+            {/* Columna derecha: el dinero */}
+            <motion.div variants={STAGGER_RIGHT} initial="hidden" animate="show"
+              className="relative overflow-hidden bg-slate-50 border-t md:border-t-0 md:border-l border-slate-100 rounded-b-[28px] md:rounded-bl-none md:rounded-r-[28px] px-6 py-6 flex flex-col gap-4">
+              {/* Halo con el color del evento */}
+              <AnimatePresence initial={false}>
+                <motion.div key={evCfg.fg} aria-hidden className="pointer-events-none absolute -top-32 -right-32 w-80 h-80 rounded-full"
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }}
+                  style={{ background: `radial-gradient(circle, ${evCfg.fg}2e 0%, transparent 70%)` }} />
+              </AnimatePresence>
+              <motion.p variants={ITEM} className="relative text-[11px] font-black uppercase tracking-wider text-slate-500 h-9 flex items-center">Pago</motion.p>
+              <RField label={noReq(f.totalAmount)} req dirty={isDirtyField("total_amount")} testId="field-total">
+                <RInput icon={CurrencyGlyph} type="number" min="0" step="0.01" value={form.total_amount} onChange={setTotal} placeholder="5000" required data-testid="input-total" />
+              </RField>
+              {ff.advance !== false && (
+                <motion.div variants={ITEM} className="relative">
+                  <RField label={f.advancePaid} dirty={isDirtyField("advance_paid")} testId="field-advance">
+                    <RInput icon={Wallet} type="number" min="0" step="0.01" value={form.advance_paid} onChange={set("advance_paid")} placeholder="0" data-testid="input-advance" />
+                  </RField>
+                  <div className="flex gap-1.5 mt-2">
+                    {[["25 %", 0.25], ["50 %", 0.5], ["Todo", 1]].map(([l, r]) => {
+                      const on = totalNum > 0 && Math.abs(advNum - totalNum * r) < 0.01;
+                      return (
+                        <motion.button key={l} type="button" disabled={!totalNum} onClick={() => setAdvanceQuick(r)} data-testid={`advance-quick-${Math.round(r * 100)}`}
+                          whileTap={{ scale: 0.92 }}
+                          className={`relative px-3 py-1 rounded-lg text-[11px] font-bold border transition-colors disabled:opacity-40 ${on ? "border-slate-900 text-white" : "bg-white text-slate-600 border-slate-200 hover:border-slate-400"}`}>
+                          {on && <motion.span layoutId="rf-quick-pill" className="absolute inset-0 rounded-[7px] bg-slate-900" transition={{ type: "spring", stiffness: 500, damping: 34 }} />}
+                          <span className="relative z-10">{l}</span>
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+                </motion.div>
               )}
-              <span className="flex-1 min-w-0 truncate text-white text-[13px] font-bold">
-                {selected.name}
-              </span>
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); onChange(""); onPaymentChange(""); setPayOpen(false); }}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onChange(""); onPaymentChange(""); setPayOpen(false); } }}
-                className="p-0.5 rounded-md hover:bg-white/15 shrink-0"
-                data-testid="partner-picker-clear"
-                aria-label="Quitar socio"
-              >
-                <X size={11} className="text-white/70" />
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="flex-1 truncate text-white/45 font-semibold">
-                {socios.length === 0 ? "Sin socios registrados" : "Sin asignar (opcional)"}
-              </span>
-              <span className="text-[10px] text-white/40 font-bold">▾</span>
-            </>
-          )}
-        </button>
-      </div>
 
-      {/* Popups vía PORTAL → escapan del stacking context del formulario */}
-      {createPortal(
-        <>
-          <AnimatePresence>
-            {open && socios.length > 0 && rect && (
-              <motion.div
-                key="partner-list"
-                data-partner-popup
-                initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                transition={{ duration: 0.18 }}
-                className="rounded-2xl overflow-hidden max-h-60 overflow-y-auto"
-                style={{
-                  ...popupPos,
-                  background: "linear-gradient(160deg, rgba(30,20,60,0.98), rgba(20,15,45,0.98))",
-                  border: "1px solid rgba(167,139,250,0.35)",
-                  boxShadow: "0 20px 50px -10px rgba(139,92,246,0.6)",
-                }}
-                data-testid="partner-picker-list"
-              >
-                {socios.map(s => {
-                  const Icon = ROLE_ICON[s.role] || Users;
-                  const isSel = value === s.id;
+              {/* Saldo */}
+              <motion.div variants={ITEM}
+                className="relative rounded-2xl bg-white border p-4 overflow-hidden transition-colors duration-500"
+                style={{ borderColor: fullyPaid ? "#10b981" : undefined, boxShadow: fullyPaid ? "0 0 0 4px rgba(16,185,129,0.12)" : undefined }}>
+                <div className="h-4 relative">
+                  <AnimatePresence mode="wait" initial={false}>
+                    {fullyPaid ? (
+                      <motion.p key="paid" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+                        className="absolute inset-0 flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-emerald-600">
+                        <motion.span className="flex" initial={{ scale: 0, rotate: -90 }} animate={{ scale: 1, rotate: 0 }} transition={{ type: "spring", stiffness: 500, damping: 16 }}><CheckCircle2 size={13} /></motion.span>
+                        Pagado completo
+                      </motion.p>
+                    ) : (
+                      <motion.p key="due" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+                        className="absolute inset-0 text-[11px] font-bold uppercase tracking-wider text-slate-500">Saldo pendiente</motion.p>
+                    )}
+                  </AnimatePresence>
+                </div>
+                <p className="text-3xl font-black text-slate-900 mt-1 tabular-nums" data-testid="balance-value">
+                  <AnimatedMoney value={balance} show={totalNum > 0} format={formatCurrency} />
+                </p>
+                <div className="mt-3 h-2 rounded-full bg-slate-100 overflow-hidden">
+                  <motion.div className={`h-full rounded-full ${fullyPaid ? "cp-rf-shine" : ""}`}
+                    initial={false} animate={{ width: `${progress}%` }} transition={{ type: "spring", stiffness: 140, damping: 22 }}
+                    style={{ background: fullyPaid ? "linear-gradient(90deg,#10b981,#34d399)" : "linear-gradient(90deg, var(--t-from,#8b5cf6), #10b981)" }} />
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1.5 tabular-nums">{!totalNum ? "Escribe el monto" : fullyPaid ? "Todo cubierto 🎉" : `${Math.round(progress)} % pagado`}</p>
+              </motion.div>
+
+              {/* Estado */}
+              <motion.div variants={ITEM} className="inline-flex self-start p-1 rounded-full bg-white border border-slate-200">
+                {STATUS_OPTIONS.map((s) => {
+                  const active = form.status === s.key;
                   return (
-                    <button
-                      type="button"
-                      key={s.id}
-                      onClick={() => handlePick(s.id)}
-                      data-testid={`partner-picker-option-${s.id}`}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/[0.08] transition-colors text-left"
-                      style={{ background: isSel ? "rgba(139,92,246,0.22)" : "transparent" }}
-                    >
-                      {s.photo && s.photo_content_type ? (
-                        <img
-                          src={`data:${s.photo_content_type};base64,${s.photo}`}
-                          alt=""
-                          className="w-7 h-7 rounded-lg object-cover shrink-0"
-                        />
-                      ) : (
-                        <div
-                          className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-[11px] font-black text-white"
-                          style={{ background: "linear-gradient(135deg,#8b5cf6,#ec4899)" }}
-                        >
-                          {s.name?.charAt(0).toUpperCase()}
-                        </div>
+                    <button key={s.key} type="button" onClick={() => setStatus({ target: { value: s.key } })}
+                      data-testid={`status-toggle-${s.key.toLowerCase()}`}
+                      className={`relative px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider transition-colors ${active ? "text-white" : "text-slate-500 hover:text-slate-800"}`}>
+                      {active && (
+                        <motion.span layoutId="rf-status-pill" className="absolute inset-0 rounded-full"
+                          style={{ background: s.key === "Pagado" ? "#10b981" : "var(--t-from,#8b5cf6)" }}
+                          transition={{ type: "spring", stiffness: 500, damping: 34 }} />
                       )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-black text-white truncate">{s.name}</p>
-                        <p className="text-[10px] text-white/50 truncate flex items-center gap-1">
-                          <Icon size={9} /> {s.role}
-                        </p>
-                      </div>
-                      {isSel && <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />}
+                      <span className="relative z-10">{s.label}</span>
                     </button>
                   );
                 })}
               </motion.div>
-            )}
-          </AnimatePresence>
+              <select value={form.status} onChange={setStatus} data-testid="input-status" className="hidden">
+                {STATUS_OPTIONS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+              </select>
 
-          <AnimatePresence>
-            {payOpen && selected && rect && (
-              <motion.div
-                key="partner-pay"
-                data-partner-popup
-                initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                transition={{ duration: 0.18 }}
-                className="rounded-xl overflow-hidden"
-                style={{
-                  ...popupPos,
-                  background: "linear-gradient(135deg, rgba(30,20,60,0.98), rgba(20,15,45,0.98))",
-                  border: "1px solid rgba(167,139,250,0.5)",
-                  boxShadow: "0 20px 50px -10px rgba(139,92,246,0.55)",
-                  padding: 10,
-                }}
-                data-testid="partner-payment-popup"
-              >
-                <p className="text-[9px] font-black text-white/60 uppercase tracking-[0.2em] mb-1.5">
-                  ¿Cuánto se le pagará?
-                </p>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 flex items-center gap-1 bg-white/10 border border-white/15 rounded-lg px-2.5 h-9">
-                    <span className="text-sm font-black text-white/80">{currencySymbol}</span>
-                    <input
-                      type="number"
-                      value={payment}
-                      onChange={e => onPaymentChange(e.target.value)}
-                      placeholder="0"
-                      min="0"
-                      step="0.01"
-                      autoFocus
-                      data-testid="partner-payment-input"
-                      className="w-full bg-transparent border-none focus:outline-none text-sm font-black text-white placeholder:text-white/30"
-                      style={{ padding: 0 }}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setPayOpen(false)}
-                    data-testid="partner-payment-confirm"
-                    className="px-3 h-9 rounded-lg text-[11px] font-black text-white transition-all"
-                    style={{ background: "linear-gradient(135deg,#8b5cf6,#ec4899)" }}
-                  >
-                    Listo
-                  </button>
+              {/* Lo que falta + guardar */}
+              <motion.div variants={ITEM} className="mt-auto pt-2">
+                <div className="flex flex-wrap items-center gap-1.5 mb-3" data-testid="required-checklist">
+                  {reqDone.map((r) => (
+                    <span key={r.k}
+                      className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border transition-colors duration-300 ${r.ok ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-white border-slate-200 text-slate-400"}`}>
+                      <AnimatePresence mode="wait" initial={false}>
+                        {r.ok ? (
+                          <motion.span key="ok" className="flex" initial={{ scale: 0, rotate: -90 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }} transition={{ type: "spring", stiffness: 520, damping: 18 }}><Check size={10} strokeWidth={3.5} /></motion.span>
+                        ) : (
+                          <motion.span key="no" className="w-1.5 h-1.5 rounded-full bg-slate-300" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} />
+                        )}
+                      </AnimatePresence>
+                      {r.label}
+                    </span>
+                  ))}
                 </div>
-                <p className="text-[9px] text-white/40 font-semibold mt-1.5">
-                  Puedes editarlo luego · déjalo en 0 si aún no lo defines
+                <motion.button type="button" onClick={handleSubmit} disabled={saving || (isEdit && dirtyFields.length === 0)} data-testid="submit-form-btn"
+                  whileHover={{ y: -2 }} whileTap={{ scale: 0.97 }}
+                  animate={{ boxShadow: allReady ? "0 14px 30px -10px rgba(139,92,246,0.65)" : "0 6px 16px -10px rgba(139,92,246,0.4)" }}
+                  className={`w-full flex items-center justify-center gap-2 px-6 h-12 rounded-xl text-sm font-black text-white transition-[filter,opacity] hover:brightness-110 disabled:opacity-50 ${allReady && !saving ? "cp-rf-shine" : ""}`}
+                  style={{ background: "linear-gradient(135deg, var(--t-from,#8b5cf6), var(--t-to,#ec4899))" }}>
+                  {saving ? <Loader2 size={15} className="animate-spin" /> : (
+                    <motion.span className="flex" animate={allReady ? { scale: [1, 1.3, 1], rotate: [0, 12, 0] } : { scale: 1 }} transition={{ duration: 0.5 }}><CheckCircle2 size={15} /></motion.span>
+                  )}
+                  {submitLabel}
+                </motion.button>
+                <p className="text-[11px] text-slate-400 text-center mt-2 hidden sm:block">
+                  {allReady ? "Todo listo · Ctrl + Enter para guardar" : "Ctrl + Enter para guardar · Esc para cerrar"}
                 </p>
               </motion.div>
-            )}
-          </AnimatePresence>
-        </>,
-        document.body
+            </motion.div>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+    </MotionConfig>,
+    document.body
+  );
+}
+
+// ── Piezas del formulario (estilo claro) ──
+const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+const DIAS = ["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+function fechaLarga(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = `${DIAS[new Date(y, m - 1, d).getDay()]} ${d} de ${MESES[m - 1]} ${y}`;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+const ITEM = {
+  hidden: { opacity: 0, y: 12 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.34, ease: [0.22, 1, 0.36, 1] } },
+};
+const STAGGER = { hidden: {}, show: { transition: { staggerChildren: 0.04, delayChildren: 0.05 } } };
+const STAGGER_RIGHT = {
+  hidden: { opacity: 0, x: 28 },
+  show: { opacity: 1, x: 0, transition: { type: "spring", stiffness: 260, damping: 30, delay: 0.06, staggerChildren: 0.05, delayChildren: 0.16 } },
+};
+function fechaCorta(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dia = DIAS[new Date(y, m - 1, d).getDay()].slice(0, 3);
+  return `${dia.charAt(0).toUpperCase() + dia.slice(1)} ${d} ${MESES[m - 1].slice(0, 3)}`;
+}
+
+// Número que «corre» hasta su nuevo valor (saldo)
+function AnimatedMoney({ value, show, format }) {
+  const [v, setV] = useState(value);
+  const prev = useRef(value);
+  useEffect(() => {
+    const from = prev.current; prev.current = value;
+    if (from === value) { setV(value); return; }
+    const ctl = fmAnimate(from, value, { duration: 0.5, ease: [0.22, 1, 0.36, 1], onUpdate: setV });
+    return () => ctl.stop();
+  }, [value]);
+  if (!show) return "—";
+  return format(Math.abs(v - value) < 0.5 ? value : Math.round(v));
+}
+
+function RLabel({ children, req }) {
+  return <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">{children}{req && <span className="text-rose-500"> *</span>}</p>;
+}
+
+function RField({ label, req, dirty, testId, children }) {
+  return (
+    <motion.div variants={ITEM} className="relative" data-testid={testId}>
+      <RLabel req={req}>{label}{dirty && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-amber-500 align-middle" data-testid="dirty-dot" />}</RLabel>
+      {children}
+    </motion.div>
+  );
+}
+
+function RInput({ icon: Icon, className = "", ...p }) {
+  return (
+    <div className="relative">
+      {Icon && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none flex"><Icon size={15} /></span>}
+      <input {...p}
+        className={`cp-rf-input w-full h-11 rounded-xl border border-slate-200 bg-white ${Icon ? "pl-9" : "pl-3"} pr-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-500/10 transition ${className}`} />
+    </div>
+  );
+}
+
+function ClientAutocomplete({ value, clients, onChange, onPick }) {
+  const [open, setOpen] = useState(false);
+  const q = (value || "").trim().toLowerCase();
+  const sug = q ? clients.filter((c) => c.name.toLowerCase().includes(q) && c.name.toLowerCase() !== q).slice(0, 5) : [];
+  return (
+    <div className="relative">
+      <RInput icon={User} value={value} placeholder="María García" required data-testid="input-client-name" autoComplete="off"
+        onChange={(e) => { onChange(e.target.value); setOpen(true); }} onBlur={() => setTimeout(() => setOpen(false), 150)} />
+      {open && sug.length > 0 && (
+        <div data-rf-popup className="absolute z-30 mt-1 w-full rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
+          <p className="px-3 pt-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Clientes anteriores</p>
+          {sug.map((c) => (
+            <button key={c.name} type="button" onMouseDown={() => { onPick(c); setOpen(false); }}
+              className="w-full flex justify-between gap-2 px-3 py-2 text-sm hover:bg-slate-50 text-left">
+              <span className="text-slate-800 truncate">{c.name}</span><span className="text-slate-400 text-xs shrink-0">{c.phone}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RDateField({ value, busy, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const base = value ? new Date(value + "T12:00:00") : new Date();
+  const [cur, setCur] = useState({ y: base.getFullYear(), m: base.getMonth() });
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  const first = new Date(cur.y, cur.m, 1); const offset = (first.getDay() + 6) % 7;
+  const days = new Date(cur.y, cur.m + 1, 0).getDate();
+  const iso = (d) => `${cur.y}-${String(cur.m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const move = (n) => setCur((c) => { const dt = new Date(c.y, c.m + n, 1); return { y: dt.getFullYear(), m: dt.getMonth() }; });
+  const today = new Date(); const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  return (
+    <div className="relative" ref={ref}>
+      <button type="button" onClick={() => setOpen((o) => !o)} data-testid="input-event-date-pretty"
+        className={`cp-rf-input w-full h-11 rounded-xl border bg-white pl-9 pr-3 text-left text-sm outline-none transition ${open ? "border-violet-400 ring-4 ring-violet-500/10" : "border-slate-200"} ${value ? "text-slate-800" : "text-slate-400"}`}>
+        {value ? fechaLarga(value) : "Elegir fecha"}
+      </button>
+      <CalIcon size={15} className="absolute left-3 top-[22px] -translate-y-1/2 text-slate-400 pointer-events-none" />
+      {open && (
+        <div data-rf-popup className="absolute z-30 mt-2 w-[310px] max-w-[85vw] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+          <div className="flex items-center justify-between mb-3">
+            <button type="button" onClick={() => move(-1)} className="w-8 h-8 rounded-full grid place-items-center hover:bg-slate-100 text-slate-500" aria-label="Mes anterior"><ChevronLeft size={16} /></button>
+            <p className="font-black text-slate-900">{MESES[cur.m].charAt(0).toUpperCase() + MESES[cur.m].slice(1)} {cur.y}</p>
+            <button type="button" onClick={() => move(1)} className="w-8 h-8 rounded-full grid place-items-center hover:bg-slate-100 text-slate-500" aria-label="Mes siguiente"><ChevronRight size={16} /></button>
+          </div>
+          <div className="grid grid-cols-7 gap-1 text-center">
+            {["L","M","M","J","V","S","D"].map((x, i) => <span key={i} className="text-[10px] font-bold text-slate-400 py-1">{x}</span>)}
+            {Array.from({ length: offset }).map((_, i) => <span key={`e${i}`} />)}
+            {Array.from({ length: days }).map((_, i) => {
+              const d = i + 1; const k = iso(d); const n = (busy[k] || []).length; const sel = value === k; const past = k < todayIso;
+              return (
+                <button key={k} type="button" onClick={() => { onChange(k); setOpen(false); }}
+                  className={`relative h-9 rounded-xl text-sm font-bold transition ${sel ? "text-white" : past ? "text-slate-300 hover:bg-slate-50" : "text-slate-700 hover:bg-slate-100"} ${k === todayIso && !sel ? "ring-1 ring-slate-300" : ""}`}
+                  style={sel ? { background: "linear-gradient(135deg, var(--t-from,#8b5cf6), var(--t-to,#ec4899))" } : undefined}>
+                  {d}
+                  {n > 0 && <span className="absolute bottom-1 left-1/2 -translate-x-1/2 flex gap-0.5">{Array.from({ length: Math.min(n, 3) }).map((_, j) => <i key={j} className={`w-1 h-1 rounded-full ${sel ? "bg-white" : "bg-rose-500"}`} />)}</span>}
+                </button>
+              );
+            })}
+          </div>
+          <p className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-3"><i className="w-1.5 h-1.5 rounded-full bg-rose-500" /> Días con eventos ya reservados</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Socio/Fotógrafo — al crear una reserva
+function PartnerPickerField({ socios, value, onChange, payment, onPaymentChange, currencySymbol }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const selected = socios.find((s) => s.id === value);
+  const ROLE_ICON = { "Fotógrafo": Camera, "Videógrafo": Video, "Asistente": Users };
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  const Avatar = ({ s, cls }) => (s.photo && s.photo_content_type
+    ? <img src={`data:${s.photo_content_type};base64,${s.photo}`} alt="" className={`${cls} rounded-lg object-cover shrink-0`} />
+    : <div className={`${cls} rounded-lg grid place-items-center shrink-0 text-[10px] font-black text-white`} style={{ background: "linear-gradient(135deg,#8b5cf6,#ec4899)" }}>{s.name?.charAt(0).toUpperCase()}</div>);
+  return (
+    <div className="relative" data-testid="field-partner" ref={ref}>
+      <RLabel>Fotógrafo / socio</RLabel>
+      <button type="button" onClick={() => setOpen((o) => !o)} data-testid="partner-picker-btn"
+        className={`cp-rf-input w-full h-11 rounded-xl border bg-white pl-3 pr-3 flex items-center gap-2 text-left text-sm transition ${open ? "border-violet-400 ring-4 ring-violet-500/10" : "border-slate-200"}`}>
+        {selected ? (<>
+          <Avatar s={selected} cls="w-6 h-6" />
+          <span className="flex-1 min-w-0 truncate font-bold text-slate-800">{selected.name}</span>
+          <span role="button" tabIndex={0} aria-label="Quitar socio" data-testid="partner-picker-clear"
+            onClick={(e) => { e.stopPropagation(); onChange(""); onPaymentChange(""); }}
+            className="p-1 rounded-md hover:bg-slate-100 text-slate-400"><X size={13} /></span>
+        </>) : (<>
+          <Camera size={15} className="text-slate-400" />
+          <span className="flex-1 truncate text-slate-400">{socios.length === 0 ? "Sin socios registrados" : "Sin asignar (opcional)"}</span>
+          <ChevronDown size={15} className="text-slate-400" />
+        </>)}
+      </button>
+      {selected && (
+        <div className="flex items-center gap-2 mt-2">
+          <span className="text-[11px] text-slate-500 shrink-0">Se le pagará</span>
+          <div className="flex-1 flex items-center gap-1 h-8 rounded-lg border border-slate-200 bg-white px-2">
+            <span className="text-xs font-black text-slate-500">{currencySymbol}</span>
+            <input type="number" min="0" step="0.01" value={payment} onChange={(e) => onPaymentChange(e.target.value)} placeholder="0"
+              data-testid="partner-payment-input" className="w-full bg-transparent outline-none text-sm font-bold text-slate-800" />
+          </div>
+        </div>
+      )}
+      {open && socios.length > 0 && (
+        <div data-partner-popup className="absolute z-30 mt-1 w-full max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-xl" data-testid="partner-picker-list">
+          {socios.map((s) => {
+            const Icon = ROLE_ICON[s.role] || Users; const isSel = value === s.id;
+            return (
+              <button type="button" key={s.id} onClick={() => { onChange(s.id); setOpen(false); }} data-testid={`partner-picker-option-${s.id}`}
+                className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 ${isSel ? "bg-violet-50" : ""}`}>
+                <Avatar s={s} cls="w-7 h-7" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-black text-slate-800 truncate">{s.name}</p>
+                  <p className="text-[10px] text-slate-500 truncate flex items-center gap-1"><Icon size={9} /> {s.role}</p>
+                </div>
+                {isSel && <CheckCircle2 size={13} className="text-emerald-500 shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );

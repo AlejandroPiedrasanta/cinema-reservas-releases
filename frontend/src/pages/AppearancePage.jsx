@@ -150,7 +150,17 @@ export default function AppearancePage() {
     swapNameEventType, changeSwapNameEventType,
     reservationFormDesign, changeReservationFormDesign,
     socioFormDesign, changeSocioFormDesign,
+    resetAppearanceToDefault,
   } = useSettings();
+
+  // Modo simple (por defecto): solo lo importante. Lo demás, en «Opciones avanzadas».
+  const [advanced, setAdvanced] = useState(() => {
+    try { return localStorage.getItem("cp_appearance_advanced") === "true"; } catch { return false; }
+  });
+  const toggleAdvanced = () => setAdvanced((v) => {
+    try { localStorage.setItem("cp_appearance_advanced", String(!v)); } catch { /* ignore */ }
+    return !v;
+  });
 
   const { toast } = useToast();
   const [accentColorInput, setAccentColorInput] = useState(customAccent || "");
@@ -315,19 +325,32 @@ export default function AppearancePage() {
               style={{ color: "#831843", opacity: 0.75 }}
             >
               {es
-                ? "50+ card panels con animaciones para personalizar cada detalle visual"
-                : "50+ animated card panels to customize every visual detail"}
+                ? "Elige el color, tu logo y cómo se ve la app"
+                : "Choose the color, your logo and how the app looks"}
             </motion.p>
           </div>
         </div>
       </motion.div>
 
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <p className="text-xs text-slate-500">
+          {advanced
+            ? (es ? "Mostrando todas las opciones." : "Showing all options.")
+            : (es ? "Mostrando lo esencial." : "Showing the essentials.")}
+        </p>
+        <button type="button" onClick={toggleAdvanced} data-testid="appearance-advanced-toggle"
+          className={`px-4 py-2 rounded-full text-[11px] font-black uppercase tracking-wider border transition-colors ${advanced ? "bg-slate-900 text-white border-slate-900" : "bg-white/80 text-slate-600 border-slate-200 hover:text-slate-900"}`}>
+          {advanced ? (es ? "Volver a lo esencial" : "Back to essentials") : (es ? "Opciones avanzadas" : "Advanced options")}
+        </button>
+      </div>
+      {advanced && (
       <SectionSearchBar
         value={searchQuery}
         onChange={setSearchQuery}
         placeholder={es ? "Buscar función… (ej: fuente, color, menú, tema, tutorial)" : "Search feature… (e.g. font, color, menu, theme)"}
         testId="appearance-search-input"
       />
+      )}
 
       <SectionSearchContext.Provider value={searchQuery}>
       <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-6">
@@ -335,14 +358,14 @@ export default function AppearancePage() {
         {/* ═══════════════════════════════════════════════════════════════
             NUEVAS SECCIONES: TEMAS · MENÚ · TUTORIAL
         ═══════════════════════════════════════════════════════════════ */}
-        <SavedThemesSection />
-        <NavMenuSection />
-        <TutorialSection />
+        {advanced && <SavedThemesSection />}
+        {advanced && <NavMenuSection />}
+        {advanced && <TutorialSection />}
 
         {/* ═══════════════════════════════════════════════════════════════
             1. PALETA DE COLORES
         ═══════════════════════════════════════════════════════════════ */}
-        <Section icon={Palette} title={es ? "Paleta de Colores" : "Color Palette"} desc={es ? "Acento, presets, saturación y gradientes" : "Accent, presets, saturation and gradients"}>
+        <Section icon={Palette} title={es ? "Color de la app" : "App color"} desc={es ? "El color principal y el estilo de las tarjetas" : "Main color and card style"} defaultOpen>
           <div className="space-y-6">
 
             <div>
@@ -401,6 +424,7 @@ export default function AppearancePage() {
               </div>
             </div>
 
+            {advanced && (<>
             <OptionRow label={es ? "Saturación de color" : "Color Saturation"} testPrefix="sat"
               current={saturation} onChange={changeSaturation} cols={3}
               options={[
@@ -426,9 +450,55 @@ export default function AppearancePage() {
                 { id: "emerald",  label: es ? "Verde" : "Green",     preview: <div className="w-8 h-3 rounded bg-emerald-300" /> },
                 { id: "none",     label: es ? "Ninguno" : "None",    preview: <div className="w-8 h-3 rounded bg-slate-200" /> },
               ]} />
+            </>)}
 
           </div>
         </Section>
+
+        {/* ═══════════════════════════════════════════════════════════════
+            VISTA (simple): menú, tamaño del texto, fondo, animaciones
+        ═══════════════════════════════════════════════════════════════ */}
+        {!advanced && (
+        <Section icon={AlignJustify} title={es ? "Vista" : "View"} desc={es ? "Menú, tamaño del texto, fondo y animaciones" : "Menu, text size, background and animations"}>
+          <div className="space-y-6" data-testid="appearance-simple-view">
+            <OptionRow label={es ? "Menú lateral" : "Side menu"} testPrefix="simple-menu"
+              current={sidebarCompact ? "icons" : "names"} onChange={v => changeSidebarCompact(v === "icons")} cols={2}
+              options={[
+                { id: "names", label: es ? "Con nombres" : "With names", preview: <div className="flex flex-col gap-0.5">{[0,1].map(i=><div key={i} className="flex items-center gap-1"><div className="w-2 h-2 rounded bg-indigo-400"/><div className="w-8 h-1.5 rounded bg-slate-300"/></div>)}</div> },
+                { id: "icons", label: es ? "Solo iconos" : "Icons only", preview: <div className="flex flex-col gap-0.5">{[0,1].map(i=><div key={i} className="w-2 h-2 rounded bg-indigo-400"/>)}</div> },
+              ]} />
+            <OptionRow label={es ? "Tamaño del texto" : "Text size"} testPrefix="simple-fs"
+              current={fontScale || "normal"} onChange={changeFontScale} cols={3}
+              options={[
+                { id: "compact", label: es ? "Pequeño" : "Small",  preview: <span className="text-[10px] font-black text-slate-700">Aa</span> },
+                { id: "normal",  label: "Normal",                 preview: <span className="text-sm font-black text-slate-700">Aa</span> },
+                { id: "large",   label: es ? "Grande" : "Large",   preview: <span className="text-lg font-black text-slate-700">Aa</span> },
+              ]} />
+            <OptionRow label={es ? "Fondo de colores" : "Color background"} testPrefix="simple-bg"
+              current={bgIntensity || "normal"} onChange={changeBgIntensity} cols={4}
+              options={[
+                { id: "off",    label: es ? "Sin fondo" : "Off",      preview: <div className="w-10 h-4 rounded bg-slate-100" /> },
+                { id: "subtle", label: es ? "Suave" : "Subtle",       preview: <div className="w-10 h-4 rounded" style={{ background: "linear-gradient(90deg,#e0e7ff,#fce7f3)" }} /> },
+                { id: "normal", label: "Normal",                     preview: <div className="w-10 h-4 rounded" style={{ background: "linear-gradient(90deg,#c7d2fe,#fbcfe8)" }} /> },
+                { id: "vivid",  label: es ? "Intenso" : "Vivid",      preview: <div className="w-10 h-4 rounded" style={{ background: "linear-gradient(90deg,#a5b4fc,#f9a8d4)" }} /> },
+              ]} />
+            <OptionRow label={es ? "Animaciones" : "Animations"} testPrefix="simple-anim"
+              current={animations ? "on" : "off"} onChange={v => changeAnimations(v === "on")} cols={2}
+              options={[
+                { id: "on",  label: es ? "Activadas" : "On",    preview: <Sparkles size={14} className="text-amber-500" /> },
+                { id: "off", label: es ? "Desactivadas (más ligera)" : "Off (lighter)", preview: <div className="w-3 h-3 rounded-full bg-slate-300" /> },
+              ]} />
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white/60 border border-slate-200/70 px-4 py-3">
+              <p className="text-xs text-slate-600">{es ? "¿Algo se ve raro? Vuelve al diseño original." : "Something looks off? Go back to the original design."}</p>
+              <button type="button" data-testid="appearance-reset"
+                onClick={() => { if (window.confirm(es ? "¿Volver a la apariencia original? Tus datos no se tocan." : "Reset appearance to default? Your data is not affected.")) resetAppearanceToDefault(); }}
+                className="px-4 py-2 rounded-xl text-xs font-black bg-slate-900 text-white hover:bg-slate-800">
+                {es ? "Restablecer apariencia" : "Reset appearance"}
+              </button>
+            </div>
+          </div>
+        </Section>
+        )}
 
         {/* ═══════════════════════════════════════════════════════════════
             4. FORMAS Y BORDES  (eliminado por el usuario)
@@ -437,6 +507,7 @@ export default function AppearancePage() {
         {/* ═══════════════════════════════════════════════════════════════
             6. INTERFAZ Y ESPACIO
         ═══════════════════════════════════════════════════════════════ */}
+        {advanced && (
         <Section icon={AlignJustify} title={es ? "Interfaz y Espacio" : "Interface & Space"} desc={es ? "Sidebar, densidad, tamaños, efectos visuales" : "Sidebar, density, sizes, visual effects"}>
           <div className="space-y-5">
 
@@ -809,6 +880,7 @@ export default function AppearancePage() {
 
           </div>
         </Section>
+        )}
 
         {/* ═══════════════════════════════════════════════════════════════
             7. TIPOGRAFÍA AVANZADA / 9. FORMULARIOS E INPUTS / 11. DASHBOARD Y WIDGETS
@@ -993,7 +1065,7 @@ export default function AppearancePage() {
         {/* ═══════════════════════════════════════════════════════════════
             TÍTULOS DEL SITIO
         ═══════════════════════════════════════════════════════════════ */}
-        {(!searchQuery.trim() || matchesSearch(searchQuery, "titulos del sitio nombres estados etiquetas paginas menu dashboard labels site titles nav")) && (
+        {advanced && (!searchQuery.trim() || matchesSearch(searchQuery, "titulos del sitio nombres estados etiquetas paginas menu dashboard labels site titles nav")) && (
         <SiteTitlesSection
           es={es}
           customLabels={customLabels}

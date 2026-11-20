@@ -287,7 +287,7 @@ export function SettingsProvider({ children }) {
   const [layoutDensity,  setLayoutDensity]  = useState(() => localStorage.getItem("layout_density")  || "standard");
   const [pageTransition, setPageTransition] = useState(() => localStorage.getItem("page_transition") || "fade");
   const [iconSize,       setIconSize]       = useState(() => localStorage.getItem("icon_size")        || "medium");
-  const [sidebarStyle,   setSidebarStyle]   = useState(() => localStorage.getItem("sidebar_style")   || "normal");
+  const [sidebarStyle,   setSidebarStyle]   = useState(() => localStorage.getItem("sidebar_style")   || "island");
   const [bgImage,        setBgImage]        = useState(() => localStorage.getItem("bg_image")         || "");
 
   // ── advancedStyle: 50+ new appearance options ────────────────────────
