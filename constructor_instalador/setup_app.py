@@ -91,6 +91,22 @@ def free_space_mb(t: Path) -> int:
         return 0
 
 
+def desktop_dir() -> Path:
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(260)
+        ctypes.windll.shell32.SHGetFolderPathW(0, 0x0000, 0, 0, buf)
+        if buf.value:
+            return Path(buf.value)
+    except Exception:
+        pass
+    return Path(os.environ.get("USERPROFILE", "")) / "Desktop"
+
+
+def desktop_shortcut_exists() -> bool:
+    return (desktop_dir() / "Cinema Reservas.lnk").exists()
+
+
 def close_splash() -> None:
     """Cierra la imagen que PyInstaller muestra al abrir el instalador (--splash)."""
     try:
@@ -350,7 +366,9 @@ class SetupApi:
     def init(self):
         return {"view": "setup", "version": _version(), "path": str(self._target), "steps": STEPS,
                 "installed": installed_version(self._target),
-                "needMB": space_needed_mb(), "freeMB": free_space_mb(self._target)}
+                "needMB": space_needed_mb(), "freeMB": free_space_mb(self._target),
+                # --auto: lo abre la propia app al actualizarse; empieza sin pedir clic
+                "autoStart": "--auto" in sys.argv, "desktopExists": desktop_shortcut_exists()}
 
     def install(self, options=None):
         if self._busy:
@@ -591,6 +609,8 @@ class SetupWindow(Frameless):
                               "(la clave llega por correo al comprar en Gumroad).")
             self.btn.setText("ABRIR CINEMA RESERVAS")
             self.btn.setEnabled(True)
+            if "--auto" in sys.argv:              # actualizacion automatica: reabrir la app
+                QTimer.singleShot(1500, self._on_button)
         else:
             self.title.setText("No se pudo instalar")
             self.info.setText("%s\n\nRevisa «Ver detalles» y vuelve a intentarlo." % err[:300])
@@ -620,6 +640,8 @@ def main():
     win = SetupWindow()
     win.show()
     close_splash()
+    if "--auto" in sys.argv:                      # actualizacion desde la app: empezar sola
+        QTimer.singleShot(800, win._on_button)
     sys.exit(app.exec())
 
 

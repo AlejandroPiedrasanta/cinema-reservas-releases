@@ -123,6 +123,8 @@ def _read_baked_version() -> str:
 # Ruta preferida (para compatibilidad con código que la referencie).
 _VERSION_FILE = BUNDLE_DIR / 'version.txt'
 _local_version = _read_baked_version()
+if os.environ.get("CP_TEST_LOCAL_VERSION"):     # solo pruebas: simular una version vieja
+    _local_version = os.environ["CP_TEST_LOCAL_VERSION"].strip()
 _update_status: dict = {"checked": False, "has_update": False}
 
 # ── Determine effective MongoDB URL (override file takes priority) ────────────
@@ -1994,20 +1996,73 @@ async def _apply_managed_update(force: bool = False, dry_run: bool = False) -> d
 
     _set_update_progress(stage="installing")
     if sys.platform == "win32":
+        # --auto: el instalador empieza solo, cierra la app, actualiza y la vuelve a abrir
         flags = 0x00000008 | 0x00000200            # DETACHED_PROCESS | NEW_PROCESS_GROUP
         try:
-            subprocess.Popen([str(dest)], cwd=str(folder), creationflags=flags | 0x01000000)
+            subprocess.Popen([str(dest), "--auto"], cwd=str(folder), creationflags=flags | 0x01000000)
         except OSError:
-            subprocess.Popen([str(dest)], cwd=str(folder), creationflags=flags)
-        msg = ("Se abrió el instalador de la versión %s. Pulsa «Instalar»: tus reservas y "
-               "respaldos se conservan." % new_v)
+            subprocess.Popen([str(dest), "--auto"], cwd=str(folder), creationflags=flags)
+        msg = ("Instalando la versión %s… Cinema Reservas se cerrará y volverá a abrirse sola en "
+               "menos de un minuto. Tus reservas y respaldos se conservan." % new_v)
+        restarted = True
     else:
-        subprocess.Popen(["open", str(dest)])
-        msg = ("Se abrió la versión %s. Cierra Cinema Reservas y arrastra la app nueva a "
-               "Aplicaciones (reemplazar). Tus datos se conservan." % new_v)
+        bundle = _mac_app_bundle()
+        if bundle and os.access(str(bundle.parent), os.W_OK):
+            _mac_auto_install(dest, bundle)
+            msg = ("Instalando la versión %s… Cinema Reservas se cerrará y volverá a abrirse sola. "
+                   "Tus datos se conservan." % new_v)
+            restarted = True
+        else:   # carpeta sin permiso de escritura: el cliente la arrastra a mano
+            subprocess.Popen(["open", str(dest)])
+            msg = ("Se abrió la versión %s. Cierra Cinema Reservas y arrastra la app nueva a "
+                   "Aplicaciones (reemplazar). Tus datos se conservan." % new_v)
+            restarted = False
     _set_update_progress(stage="done")
-    return {"success": True, "restarted": False, "old_version": _local_version,
+    return {"success": True, "restarted": restarted, "old_version": _local_version,
             "new_version": new_v, "message": msg}
+
+
+def _mac_app_bundle():
+    """Ruta de «Cinema Reservas.app» que esta corriendo (None si no es la app de Mac)."""
+    try:
+        exe = Path(sys.executable).resolve()          # …/X.app/Contents/MacOS/CinemaReservas
+        app = exe.parents[2]
+        return app if app.suffix == ".app" else None
+    except Exception:
+        return None
+
+
+def _mac_auto_install(dmg: Path, bundle: Path) -> None:
+    """Instala el .dmg nuevo encima de la app actual y la vuelve a abrir. Lo hace un script
+    aparte (sigue vivo cuando esta app se cierra): monta el .dmg, cierra la app, copia la
+    nueva a un lado, cambia una por otra (si algo falla queda la vieja) y la abre."""
+    import shlex
+    import tempfile
+    q = shlex.quote
+    exe_path = str(bundle / "Contents" / "MacOS" / "CinemaReservas")
+    script = f"""#!/bin/bash
+sleep 2
+MNT=$(mktemp -d /tmp/cr_upd.XXXXXX)
+hdiutil attach -nobrowse -noautoopen -mountpoint "$MNT" {q(str(dmg))} >/dev/null || exit 1
+NEW=$(ls -d "$MNT"/*.app | head -1)
+[ -d "$NEW" ] || {{ hdiutil detach "$MNT" -quiet; exit 1; }}
+TMP={q(str(bundle) + '.nuevo')}
+rm -rf "$TMP"
+ditto "$NEW" "$TMP" || {{ hdiutil detach "$MNT" -quiet; exit 1; }}
+hdiutil detach "$MNT" -quiet
+pkill -f {q(exe_path)}
+sleep 1
+pkill -9 -f {q(exe_path)} 2>/dev/null
+rm -rf {q(str(bundle))} && mv "$TMP" {q(str(bundle))}
+xattr -dr com.apple.quarantine {q(str(bundle))} 2>/dev/null
+open {q(str(bundle))}
+"""
+    fd, path = tempfile.mkstemp(prefix="cr_actualizar_", suffix=".sh")
+    with os.fdopen(fd, "w") as f:
+        f.write(script)
+    os.chmod(path, 0o755)
+    subprocess.Popen(["/bin/bash", path], start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 async def _check_for_updates():

@@ -164,6 +164,11 @@ views.setup = {
     this.steps = s.steps || [];
     this.mode = setupMode(s);
     this.renderSteps();
+    if (s.autoStart) {                 // actualizacion lanzada por la app: empezar sola
+      $("#opt-desktop").checked = !!s.desktopExists || !s.installed;
+      $("#opt-open").checked = true;
+      setTimeout(() => this.primary(), 700);
+    }
     if (s.freeMB && s.needMB && s.freeMB < s.needMB) {      // sin espacio: avisar antes de empezar
       setAlert($("#st-alert"), "error", `No hay espacio suficiente: se necesitan ${fmtMB(s.needMB)} y quedan ${fmtMB(s.freeMB)} libres en el disco.`);
       $("#st-alert").classList.add("mt-4");
