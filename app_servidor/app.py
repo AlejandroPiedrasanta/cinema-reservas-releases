@@ -30,7 +30,7 @@ import time
 import asyncio
 import sys
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
@@ -141,8 +141,15 @@ if _using_embedded:
 else:
     try:
         from motor.motor_asyncio import AsyncIOMotorClient as _MotorClient
-        _mongo_client = _MotorClient(_effective_mongo_url, serverSelectionTimeoutMS=8000)
-        logger.warning(f"Motor inicializado para: {_effective_mongo_url[:50]}...")
+        _kw = {"serverSelectionTimeoutMS": 8000}
+        if _effective_mongo_url.lower().startswith("mongodb+srv://"):
+            try:
+                import certifi as _certifi
+                _kw["tlsCAFile"] = _certifi.where()     # TLS con certificados de certifi (Mac)
+            except Exception:
+                pass
+        _mongo_client = _MotorClient(_effective_mongo_url, **_kw)
+        logger.warning("Motor inicializado (base en la nube)")
     except Exception as _e:
         logger.error(f"Error al inicializar motor: {_e} — usando modo embebido")
         from mongomock_motor import AsyncMongoMockClient
@@ -186,51 +193,142 @@ def _deserialize_doc(doc: dict) -> dict:
     return d
 
 
+# Base local (embebida): todo vive en memoria y se guarda en DATA_FILE (cinema_data.json).
+#   · Guardado seguro: se escribe a un temporal y se reemplaza (un corte de luz no deja
+#     el archivo a medias) y la version anterior queda como cinema_data.json.bak.
+#   · Si el archivo esta dañado al abrir: se usa el .bak y el dañado se guarda aparte
+#     (cinema_data.danado-<fecha>.json); nunca se sobrescribe con una base vacia.
+#   · Varios cambios seguidos se agrupan en un solo guardado.
+DATA_BAK = DATA_FILE.with_name(DATA_FILE.name + '.bak')
+EMBEDDED_COLLECTIONS = ['reservations', 'socios', 'app_settings', 'saved_themes', 'metas']
+_save_lock = asyncio.Lock()
+_save_pending = False
+
+
+def _read_data_file(path: Path):
+    data = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(data, dict):
+        raise ValueError("formato inesperado")
+    return data
+
+
 async def _load_embedded_data():
-    if not DATA_FILE.exists():
+    if not DATA_FILE.exists() and not DATA_BAK.exists():
         logger.info("No saved data found — starting fresh.")
         return
-    try:
-        data = json.loads(DATA_FILE.read_text(encoding='utf-8'))
-        for col_name, docs in data.items():
-            if not docs:
-                continue
-            col = db[col_name]
-            restored = [_deserialize_doc(d) for d in docs]
-            if restored:
-                await col.insert_many(restored)
-        logger.info(f"Loaded {sum(len(v) for v in data.values())} docs from {DATA_FILE.name}")
-    except Exception as e:
-        logger.error(f"Failed to load saved data: {e}")
+    data, origen = None, DATA_FILE
+    for cand in (DATA_FILE, DATA_BAK):
+        if not cand.exists():
+            continue
+        try:
+            data, origen = _read_data_file(cand), cand
+            break
+        except Exception as e:
+            logger.error(f"No se pudo leer {cand.name}: {e}")
+    if origen is not DATA_FILE and DATA_FILE.exists():
+        # el principal esta dañado: apartarlo (no se borra) y seguir con la copia
+        danado = DATA_FILE.with_name("cinema_data.danado-%s.json" % datetime.now().strftime("%Y%m%d-%H%M%S"))
+        try:
+            DATA_FILE.replace(danado)
+            logger.error(f"cinema_data.json dañado: se aparto como {danado.name}")
+        except Exception as e:
+            logger.error(f"No se pudo apartar el archivo dañado: {e}")
+    if data is None:
+        logger.error("No hay copia legible de los datos: se empieza vacio (el dañado quedo guardado aparte).")
+        return
+    for col_name, docs in data.items():
+        if docs and isinstance(docs, list):
+            await db[col_name].insert_many([_deserialize_doc(d) for d in docs])
+    logger.info(f"Loaded {sum(len(v) for v in data.values() if isinstance(v, list))} docs from {origen.name}")
+    if origen is DATA_BAK:
+        await _save_embedded_data()          # rehace el principal a partir de la copia
+
+
+def _write_data_atomic(text: str) -> None:
+    tmp = DATA_FILE.with_name(DATA_FILE.name + '.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    if DATA_FILE.exists():
+        try:
+            DATA_FILE.replace(DATA_BAK)
+        except Exception:
+            pass
+    tmp.replace(DATA_FILE)
 
 
 async def _save_embedded_data():
-    try:
-        data = {}
-        for col_name in ['reservations', 'socios', 'app_settings', 'saved_themes', 'metas']:
-            docs = await db[col_name].find({}).to_list(100000)
-            data[col_name] = [_serialize_doc(d) for d in docs]
-        DATA_FILE.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2, default=str),
-            encoding='utf-8'
-        )
-        logger.info(f"Data saved → {DATA_FILE.name}")
-    except Exception as e:
-        logger.error(f"Failed to save data: {e}")
+    """Guarda la base local. Solo actua en modo local (nunca escribe datos de la nube
+    sobre el archivo local) y agrupa guardados seguidos."""
+    global _save_pending
+    if not _using_embedded:
+        return
+    _save_pending = True
+    if _save_lock.locked():
+        return                              # el guardado en curso recogera este cambio
+    async with _save_lock:
+        while _save_pending and _using_embedded:
+            _save_pending = False
+            try:
+                snap_db = db
+                data = {}
+                for col_name in EMBEDDED_COLLECTIONS:
+                    docs = await snap_db[col_name].find({}).to_list(None)
+                    data[col_name] = [_serialize_doc(d) for d in docs]
+                if not _using_embedded or db is not snap_db:
+                    break                       # se cambio de base mientras tanto: no escribir
+                text = json.dumps(data, ensure_ascii=False, indent=1, default=str)
+                await asyncio.to_thread(_write_data_atomic, text)
+                logger.info(f"Data saved → {DATA_FILE.name}")
+            except Exception as e:
+                logger.error(f"Failed to save data: {e}")
+            await asyncio.sleep(0.2)        # agrupa los cambios que lleguen mientras tanto
 
 
 async def _auto_save_loop():
-    """Auto-save every 60 seconds."""
+    """Guardado de respaldo cada 60 s (solo en modo local)."""
     while True:
         await asyncio.sleep(60)
         await _save_embedded_data()
+
+
+async def _use_embedded_db():
+    """Pasa a la base local cargando lo que ya habia en cinema_data.json."""
+    global db, client, _using_embedded, _autosave_task
+    from mongomock_motor import AsyncMongoMockClient
+    new_client = AsyncMongoMockClient()
+    db = new_client[DB_NAME]
+    client = new_client
+    _using_embedded = True
+    await _load_embedded_data()
+    if _autosave_task is None or _autosave_task.done():
+        _autosave_task = asyncio.create_task(_auto_save_loop())
+
+
+_autosave_task = None
+
+
+def _new_motor_client(url: str, timeout_ms: int = 8000):
+    """Cliente MongoDB (nube). Usa los certificados de certifi para TLS: en la app de Mac
+    empaquetada Python no trae los del sistema y Atlas fallaria con CERTIFICATE_VERIFY_FAILED."""
+    from motor.motor_asyncio import AsyncIOMotorClient
+    kw = {"serverSelectionTimeoutMS": timeout_ms}
+    low = url.lower()
+    if (low.startswith("mongodb+srv://") or "tls=true" in low or "ssl=true" in low) and "tlscafile" not in low:
+        try:
+            import certifi
+            kw["tlsCAFile"] = certifi.where()
+        except Exception:
+            pass
+    return AsyncIOMotorClient(url, **kw)
 
 
 # ─── Lifespan ─────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    global db, client, _using_embedded
+    global db, client, _using_embedded, _autosave_task
     _task = None
 
     # ── Verify MongoDB connection or fall back to embedded ──────────────────
@@ -252,7 +350,7 @@ async def lifespan(app_instance: FastAPI):
 
     if _using_embedded:
         await _load_embedded_data()
-        _task = asyncio.create_task(_auto_save_loop())
+        _task = _autosave_task = asyncio.create_task(_auto_save_loop())
 
     # ── SEED_APP_SETTINGS: sembrar github_config de fábrica ──────────────────
     # Persiste el repositorio oficial en la BD si no existe (funciona tanto en
@@ -387,6 +485,47 @@ def doc_to_dict(doc: dict) -> dict:
 
 # ─── Models ───────────────────────────────────────────────
 
+# ── Validaciones comunes (mensajes en español para mostrar tal cual) ─────────
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _v_name(v, label="El nombre"):
+    if v is None:
+        return v
+    v = str(v).strip()
+    if not v:
+        raise ValueError(f"{label} es obligatorio")
+    return v
+
+
+def _v_date(v):
+    if v is None:
+        return v
+    v = str(v).strip()
+    try:
+        datetime.strptime(v[:10], "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("La fecha del evento no es válida (formato AAAA-MM-DD)")
+    return v
+
+
+def _v_email(v):
+    if v is None:
+        return v
+    v = str(v).strip()
+    if not v:
+        return None
+    if not _EMAIL_RE.match(v):
+        raise ValueError("El correo electrónico no es válido")
+    return v
+
+
+def _v_non_negative(v, label):
+    if v is not None and v < 0:
+        raise ValueError(f"{label} no puede ser negativo")
+    return v
+
+
 class ReservationCreate(BaseModel):
     client_name: str
     client_phone: Optional[str] = None
@@ -401,6 +540,47 @@ class ReservationCreate(BaseModel):
     status: str = "Pendiente"
     notes: Optional[str] = None
     package_type: Optional[str] = None
+
+    @field_validator("client_name")
+    @classmethod
+    def _name(cls, v):
+        return _v_name(v, "El nombre del cliente")
+
+    @field_validator("event_type")
+    @classmethod
+    def _type(cls, v):
+        return _v_name(v, "El tipo de evento")
+
+    @field_validator("event_date")
+    @classmethod
+    def _date(cls, v):
+        return _v_date(v)
+
+    @field_validator("client_email")
+    @classmethod
+    def _email(cls, v):
+        return _v_email(v)
+
+    @field_validator("guests_count")
+    @classmethod
+    def _guests(cls, v):
+        return _v_non_negative(v, "El número de invitados")
+
+    @field_validator("total_amount")
+    @classmethod
+    def _total(cls, v):
+        return _v_non_negative(v, "El monto total")
+
+    @field_validator("advance_paid")
+    @classmethod
+    def _adv(cls, v):
+        return _v_non_negative(v, "El anticipo")
+
+    @model_validator(mode="after")
+    def _adv_le_total(self):
+        if (self.advance_paid or 0) > (self.total_amount or 0) + 0.005:
+            raise ValueError("El anticipo no puede ser mayor que el monto total")
+        return self
 
 
 class ReservationUpdate(BaseModel):
@@ -420,6 +600,41 @@ class ReservationUpdate(BaseModel):
     assigned_partners: Optional[list] = None
     package_type: Optional[str] = None
 
+    @field_validator("client_name")
+    @classmethod
+    def _name(cls, v):
+        return _v_name(v, "El nombre del cliente")
+
+    @field_validator("event_type")
+    @classmethod
+    def _type(cls, v):
+        return _v_name(v, "El tipo de evento")
+
+    @field_validator("event_date")
+    @classmethod
+    def _date(cls, v):
+        return _v_date(v)
+
+    @field_validator("client_email")
+    @classmethod
+    def _email(cls, v):
+        return "" if v is not None and not str(v).strip() else _v_email(v)
+
+    @field_validator("guests_count")
+    @classmethod
+    def _guests(cls, v):
+        return _v_non_negative(v, "El número de invitados")
+
+    @field_validator("total_amount")
+    @classmethod
+    def _total(cls, v):
+        return _v_non_negative(v, "El monto total")
+
+    @field_validator("advance_paid")
+    @classmethod
+    def _adv(cls, v):
+        return _v_non_negative(v, "El anticipo")
+
 
 class SocioCreate(BaseModel):
     name: str
@@ -429,6 +644,21 @@ class SocioCreate(BaseModel):
     notes: Optional[str] = None
     rate_per_event: Optional[float] = None
 
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v):
+        return _v_name(v, "El nombre del socio")
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v):
+        return _v_email(v)
+
+    @field_validator("rate_per_event")
+    @classmethod
+    def _rate(cls, v):
+        return _v_non_negative(v, "La tarifa por evento")
+
 
 class SocioUpdate(BaseModel):
     name: Optional[str] = None
@@ -437,6 +667,21 @@ class SocioUpdate(BaseModel):
     email: Optional[str] = None
     notes: Optional[str] = None
     rate_per_event: Optional[float] = None
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v):
+        return _v_name(v, "El nombre del socio")
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v):
+        return "" if v is not None and not str(v).strip() else _v_email(v)
+
+    @field_validator("rate_per_event")
+    @classmethod
+    def _rate(cls, v):
+        return _v_non_negative(v, "La tarifa por evento")
 
 
 class NotificationSettingsModel(BaseModel):
@@ -489,7 +734,7 @@ async def get_stats():
         {},
         {"event_date": 1, "status": 1, "total_amount": 1, "advance_paid": 1,
          "assigned_partners": 1, "_id": 0}
-    ).to_list(10000)
+    ).to_list(None)
 
     upcoming = sum(
         1 for d in all_res
@@ -519,7 +764,7 @@ async def get_stats():
 
 @api_router.get("/reservations")
 async def list_reservations():
-    docs = await db.reservations.find({}, {"receipt_images.data": 0}).to_list(1000)
+    docs = await db.reservations.find({}, {"receipt_images.data": 0}).to_list(None)
     return [doc_to_dict(d) for d in docs]
 
 
@@ -557,6 +802,14 @@ async def update_reservation(reservation_id: str, reservation: ReservationUpdate
     update_data = {k: v for k, v in reservation.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="Sin datos para actualizar")
+    if "advance_paid" in update_data or "total_amount" in update_data:
+        cur = await db.reservations.find_one({"_id": oid}, {"total_amount": 1, "advance_paid": 1})
+        if not cur:
+            raise HTTPException(status_code=404, detail="Reserva no encontrada")
+        total = update_data.get("total_amount", cur.get("total_amount") or 0)
+        adv = update_data.get("advance_paid", cur.get("advance_paid") or 0)
+        if (adv or 0) > (total or 0) + 0.005:
+            raise HTTPException(status_code=422, detail="El anticipo no puede ser mayor que el monto total")
     result = await db.reservations.update_one({"_id": oid}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
@@ -623,7 +876,7 @@ async def delete_receipt(reservation_id: str, receipt_id: str):
 
 @api_router.get("/export/reservations")
 async def export_reservations(format: str = "csv"):
-    docs = await db.reservations.find({}, {"receipt_images": 0}).to_list(10000)
+    docs = await db.reservations.find({}, {"receipt_images": 0}).to_list(None)
     data = [doc_to_dict(d) for d in docs]
     if format == "json":
         return JSONResponse(content=data,
@@ -646,7 +899,7 @@ async def get_calendar_events():
     docs = await db.reservations.find(
         {"status": {"$nin": ["Cancelado"]}},
         {"client_name": 1, "event_date": 1, "event_type": 1, "status": 1, "_id": 1}
-    ).to_list(1000)
+    ).to_list(None)
     return [doc_to_dict(d) for d in docs]
 
 
@@ -654,7 +907,7 @@ async def get_calendar_events():
 
 @api_router.get("/socios")
 async def list_socios():
-    docs = await db.socios.find({}, {"photo": 0, "photo_content_type": 0}).to_list(1000)
+    docs = await db.socios.find({}, {"photo": 0, "photo_content_type": 0}).to_list(None)
     return [doc_to_dict(d) for d in docs]
 
 
@@ -741,7 +994,11 @@ async def delete_socio_photo(socio_id: str):
         oid = ObjectId(socio_id)
     except Exception:
         raise HTTPException(status_code=400, detail="ID inválido")
-    await db.socios.update_one({"_id": oid}, {"$set": {"photo": None, "photo_content_type": None}})
+    result = await db.socios.update_one({"_id": oid}, {"$set": {"photo": None, "photo_content_type": None}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Socio no encontrado")
+    if _using_embedded:
+        asyncio.create_task(_save_embedded_data())
     return {"message": "Foto eliminada"}
 
 
@@ -750,7 +1007,7 @@ async def get_financials():
     docs = await db.reservations.find(
         {"status": {"$nin": ["Cancelado"]}},
         {"total_amount": 1, "advance_paid": 1, "assigned_partners": 1}
-    ).to_list(10000)
+    ).to_list(None)
     total_event = sum((d.get("total_amount") or 0) for d in docs)
     total_advance = sum((d.get("advance_paid") or 0) for d in docs)
     total_cost = total_paid = total_pending = 0
@@ -913,16 +1170,41 @@ async def get_db_stats():
 
 @api_router.post("/settings/database/test")
 async def test_db_connection(req: DBConnectRequest):
-    if req.url.lower() == "embedded":
+    url = req.url.strip()
+    if url.lower() in ("embedded", "", "local"):
         return {"success": True, "message": "Modo embebido seleccionado"}
+    if not url.lower().startswith(("mongodb://", "mongodb+srv://")):
+        raise HTTPException(status_code=400, detail="La dirección debe empezar por mongodb:// o mongodb+srv://")
+    test_client = None
     try:
-        from motor.motor_asyncio import AsyncIOMotorClient
-        test_client = AsyncIOMotorClient(req.url, serverSelectionTimeoutMS=5000)
+        test_client = _new_motor_client(url, 8000)
         await test_client[DB_NAME].command("ping")
-        test_client.close()
         return {"success": True, "message": "Conexión exitosa"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"No se pudo conectar: {e}")
+        raise HTTPException(status_code=400, detail=_mongo_error_text(e))
+    finally:
+        if test_client is not None:
+            test_client.close()
+
+
+def _mongo_error_text(e: Exception) -> str:
+    """Explica en palabras simples por que no conecta la base en la nube."""
+    s = str(e)
+    low = s.lower()
+    if "authentication failed" in low or "bad auth" in low:
+        return "Usuario o contraseña de la base de datos incorrectos."
+    if "certificate" in low:
+        return "No se pudo verificar el certificado seguro del servidor de la base de datos."
+    if "dns" in low or "nodename nor servname" in low or "getaddrinfo" in low or "no answer" in low:
+        return "No se encontró el servidor. Revisa la dirección y tu conexión a internet."
+    if ("refused" in low or "denegó" in low or "10061" in low or "errno 111" in low
+            or "unreachable" in low or "no route" in low or "10065" in low):
+        return ("No responde el servidor de la base de datos (¿está encendido el NAS o el servidor, "
+                "y el puerto es correcto?). Revisa también que estés en la misma red.")
+    if "timed out" in low or "serverselectiontimeout" in low or "no replica set members" in low:
+        return ("No responde el servidor de la base de datos. Revisa tu internet y, si es MongoDB Atlas, "
+                "que en Network Access esté permitida la IP de este equipo.")
+    return "No se pudo conectar: " + s[:300]
 
 
 @api_router.post("/settings/database/connect")
@@ -932,26 +1214,28 @@ async def switch_database(req: DBConnectRequest):
 
     # Switch to embedded mode
     if url.lower() in ('embedded', '', 'local'):
-        from mongomock_motor import AsyncMongoMockClient
-        new_client = AsyncMongoMockClient()
-        db = new_client[DB_NAME]
-        client = new_client
         CUSTOM_DB_FILE.unlink(missing_ok=True)
-        _using_embedded = True
+        if _using_embedded:
+            # ya estaba en local: NO crear una base vacia (se perderian los datos)
+            return {"success": True, "message": "Ya estás usando la base local. Tus datos se guardan en este equipo."}
+        await _use_embedded_db()            # vuelve a la local con lo que ya tenia guardado
         return {"success": True, "message": "Modo embebido activado. Los datos se guardan localmente."}
 
+    if not url.lower().startswith(("mongodb://", "mongodb+srv://")):
+        raise HTTPException(status_code=400, detail="La dirección debe empezar por mongodb:// o mongodb+srv://")
     # Switch to MongoDB URL
     try:
-        from motor.motor_asyncio import AsyncIOMotorClient as _MotorClient
-        new_client = _MotorClient(url, serverSelectionTimeoutMS=8000)
+        new_client = _new_motor_client(url, 8000)
         await new_client[DB_NAME].command("ping")
-        db = new_client[DB_NAME]
-        client = new_client
-        CUSTOM_DB_FILE.write_text(url)
-        _using_embedded = False
-        return {"success": True, "message": "Base de datos conectada correctamente"}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error al conectar: {e}")
+        raise HTTPException(status_code=400, detail=_mongo_error_text(e))
+    if _using_embedded:
+        await _save_embedded_data()         # deja la base local guardada antes de cambiar
+    db = new_client[DB_NAME]
+    client = new_client
+    CUSTOM_DB_FILE.write_text(url)
+    _using_embedded = False
+    return {"success": True, "message": "Base de datos conectada correctamente"}
 
 
 @api_router.get("/settings/database/factory-presets")
@@ -968,15 +1252,15 @@ async def reset_database():
     # Fall back to default MONGO_URL from .env
     default_url = MONGO_URL.strip()
     if default_url.lower() in ('embedded', '', 'local'):
-        from mongomock_motor import AsyncMongoMockClient
-        new_client = AsyncMongoMockClient()
-        _using_embedded = True
+        if not _using_embedded:             # si ya era local, se queda con sus datos
+            await _use_embedded_db()
     else:
-        from motor.motor_asyncio import AsyncIOMotorClient as _MotorClient
-        new_client = _MotorClient(default_url)
+        if _using_embedded:
+            await _save_embedded_data()
+        new_client = _new_motor_client(default_url)
+        db = new_client[DB_NAME]
+        client = new_client
         _using_embedded = False
-    db = new_client[DB_NAME]
-    client = new_client
     return {"success": True, "message": "Restaurado a la base de datos predeterminada."}
 
 
@@ -1005,7 +1289,7 @@ async def cleanup_data(action: str = "cancelled", months_old: int = 6):
         cancelled_count = await db.reservations.count_documents({"status": "Cancelado"})
         cutoff = datetime.now(timezone.utc) - timedelta(days=months_old * 30)
         cutoff_str = cutoff.strftime("%Y-%m-%d")
-        docs = await db.reservations.find({"status": "Completado"}).to_list(100000)
+        docs = await db.reservations.find({"status": "Completado"}).to_list(None)
         old_completed = sum(1 for d in docs if d.get("event_date", "") < cutoff_str)
         return {
             "ok": True,
@@ -1028,7 +1312,7 @@ async def cleanup_data(action: str = "cancelled", months_old: int = 6):
     if action == "old_completed":
         cutoff = datetime.now(timezone.utc) - timedelta(days=months_old * 30)
         cutoff_str = cutoff.strftime("%Y-%m-%d")
-        docs = await db.reservations.find({"status": "Completado"}).to_list(100000)
+        docs = await db.reservations.find({"status": "Completado"}).to_list(None)
         ids_to_delete = [d["_id"] for d in docs if d.get("event_date", "") < cutoff_str]
         if ids_to_delete:
             result = await db.reservations.delete_many({"_id": {"$in": ids_to_delete}})
@@ -1054,7 +1338,7 @@ async def _create_backup(label: str = "manual") -> dict:
     names = await _all_collections()
     backup_data: dict = {"_meta": {"created_at": datetime.now(timezone.utc).isoformat(), "label": label, "collections": names}}
     for cname in names:
-        docs = await db[cname].find({}).to_list(100000)
+        docs = await db[cname].find({}).to_list(None)
         backup_data[cname] = [doc_to_dict(d) for d in docs]
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"backup_{label}_{ts}.json"
@@ -1075,7 +1359,7 @@ async def download_full_backup():
     names = await _all_collections()
     backup_data: dict = {"_meta": {"created_at": datetime.now(timezone.utc).isoformat(), "app": "Cinema Productions", "collections": names}}
     for cname in names:
-        docs = await db[cname].find({}).to_list(100000)
+        docs = await db[cname].find({}).to_list(None)
         backup_data[cname] = [doc_to_dict(d) for d in docs]
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"cinema_backup_{ts}.json"
@@ -1160,8 +1444,14 @@ async def restore_backup(file: UploadFile = File(...)):
         try:
             clean_docs = []
             for d in docs:
-                d.pop("id", None)
+                if not isinstance(d, dict):
+                    continue
+                old_id = d.pop("id", None)
                 d.pop("_id", None)
+                # conservar el mismo ID: las reservas guardan el ID de sus socios asignados,
+                # y al pasar los datos a otra base (p. ej. el NAS) los enlaces deben seguir valiendo
+                if isinstance(old_id, str) and ObjectId.is_valid(old_id):
+                    d["_id"] = ObjectId(old_id)
                 clean_docs.append(d)
             await db[cname].delete_many({})
             if clean_docs:
@@ -1352,7 +1642,7 @@ async def export_reservations_xlsx():
         from openpyxl.utils import get_column_letter
         import io as _io
 
-        docs = await db.reservations.find({}, {"receipt_images": 0, "assigned_partners": 0}).to_list(100000)
+        docs = await db.reservations.find({}, {"receipt_images": 0, "assigned_partners": 0}).to_list(None)
         data = [doc_to_dict(d) for d in docs]
 
         wb = openpyxl.Workbook()
@@ -5179,6 +5469,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def _save_local_after_changes(request, call_next):
+    """Base local: tras cualquier cambio correcto (crear, editar, borrar...) se guarda en
+    disco, aunque el endpoint olvide hacerlo. Los guardados seguidos se agrupan."""
+    response = await call_next(request)
+    if (_using_embedded and request.method in ("POST", "PUT", "PATCH", "DELETE")
+            and request.url.path.startswith("/api/") and response.status_code < 400):
+        asyncio.create_task(_save_embedded_data())
+    return response
+
+
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi.encoders import jsonable_encoder  # noqa: E402
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error_es(request, exc: RequestValidationError):
+    """Errores de datos con un mensaje claro en español (y el detalle tecnico aparte)."""
+    msgs = []
+    for err in exc.errors():
+        m = str(err.get("msg", ""))
+        if m.startswith("Value error, "):
+            m = m[len("Value error, "):]
+        elif err.get("type") == "missing":
+            m = "Falta el campo «%s»" % (err.get("loc") or ["?"])[-1]
+        elif "valid number" in m or "valid integer" in m:
+            m = "El campo «%s» debe ser un número" % (err.get("loc") or ["?"])[-1]
+        msgs.append(m)
+    return JSONResponse(status_code=422, content={"detail": "; ".join(dict.fromkeys(msgs)) or "Datos no válidos",
+                                                  "errors": jsonable_encoder(exc.errors())})
+
 
 _UPDATE_PATHS = ("/api/updates/apply-and-restart", "/api/github/apply-update")
 

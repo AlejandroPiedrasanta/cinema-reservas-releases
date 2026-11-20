@@ -16,6 +16,11 @@ Gestor de reservas de eventos de **Cinema Productions**, 100 % local en tu compu
 
 Al abrir la app por primera vez pide la clave de licencia que llega por correo al comprar.
 
+## Base de datos
+
+Por defecto todo se guarda en la computadora (`cinema_data.json`). Para compartir los datos entre
+varias computadoras con un NAS UGREEN (o cualquier MongoDB), ver **[GUIA_NAS_UGREEN.md](GUIA_NAS_UGREEN.md)**.
+
 ## Actualizaciones
 
 La app revisa este repositorio. Cuando aparece una versión nueva en *Releases*,
