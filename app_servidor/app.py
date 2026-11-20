@@ -1901,8 +1901,9 @@ async def _find_managed_release(fresh: bool = False) -> dict:
     try:
         releases = await asyncio.to_thread(_get)
     except Exception as e:
+        # p. ej. limite de 60 consultas/hora por IP de la API de GitHub: plan B sin API
         logger.warning(f"No se pudieron consultar las actualizaciones ({MANAGED_UPDATE_REPO}): {e}")
-        return {}
+        releases = []
     best = {}
     for rel in releases if isinstance(releases, list) else []:
         if rel.get("draft") or rel.get("prerelease"):
@@ -1919,9 +1920,47 @@ async def _find_managed_release(fresh: bool = False) -> dict:
                             "size": a.get("size", 0), "page": rel.get("html_url", ""),
                             "sha256": digest[7:].lower() if digest.startswith("sha256:") else ""}
                 break
+    if not best:
+        best = await _find_managed_release_fallback(owner, repo)
     out = {k: v for k, v in best.items() if not k.startswith("_")}
-    _managed_release_cache.update(ts=time.time(), data=dict(out))
+    if out:
+        _managed_release_cache.update(ts=time.time(), data=dict(out))
     return out
+
+
+async def _find_managed_release_fallback(owner: str, repo: str) -> dict:
+    """Sin API de GitHub: lee version.txt del repo (raw.githubusercontent, sin el limite de
+    60 consultas/hora) y comprueba que el instalador de esta plataforma este publicado en
+    https://github.com/<repo>/releases/download/v<version>/<archivo>."""
+    import platform
+    import urllib.request
+
+    def _get():
+        req = urllib.request.Request(f"https://raw.githubusercontent.com/{owner}/{repo}/main/version.txt",
+                                     headers={"User-Agent": "cinema-reservas"})
+        with urllib.request.urlopen(req, timeout=12, context=_managed_ssl_ctx()) as r:
+            v = (r.read().decode("utf-8", "ignore").strip().splitlines() or [""])[0].strip().lstrip("v")
+        if not v:
+            return {}
+        if sys.platform == "win32":
+            name = f"CinemaReservas-{v}-Setup.exe"
+        elif sys.platform == "darwin":
+            arch = "arm64" if (platform.machine() or "").lower() in ("arm64", "aarch64") else "x86_64"
+            name = f"CinemaReservas-{v}-{arch}.dmg"
+        else:
+            return {}
+        url = f"https://github.com/{owner}/{repo}/releases/download/v{v}/{name}"
+        head = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "cinema-reservas"})
+        with urllib.request.urlopen(head, timeout=15, context=_managed_ssl_ctx()) as r:   # 404 si no esta
+            size = int(r.headers.get("Content-Length") or 0)
+        return {"version": v, "name": name, "url": url, "size": size, "sha256": "",
+                "page": f"https://github.com/{owner}/{repo}/releases/tag/v{v}"}
+
+    try:
+        return await asyncio.to_thread(_get)
+    except Exception as e:
+        logger.warning(f"Tampoco se pudo leer la version publicada: {e}")
+        return {}
 
 
 async def _check_managed_update():

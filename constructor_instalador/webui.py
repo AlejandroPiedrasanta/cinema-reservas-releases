@@ -151,17 +151,232 @@ def _load_geom() -> dict:
     return {}
 
 
+class _WinChrome:
+    """Ventana de la app SIN la barra de Windows: los botones minimizar / maximizar / cerrar
+    van dentro de la propia app. Como la ventana sin marco de Windows no se puede
+    redimensionar ni maximizar bien (taparia la barra de tareas), se hace aqui con Win32:
+      - maximizar = ocupar el area de trabajo del monitor (sin tapar la barra de tareas)
+      - redimensionar = arrastrar los bordes (la pagina avisa del borde; aqui se sigue el raton)
+    Los metodos publicos los llama la pagina con window.pywebview.api.<nombre>()."""
+
+    MIN_W, MIN_H = 1024, 680
+
+    def __init__(self, start_max: bool, last_rect=None):
+        self._w = None
+        self._max = start_max
+        self._normal = last_rect          # (x, y, w, h) antes de maximizar
+        self._resizing = False
+
+    # ── Win32 ──
+    def _hwnd(self):
+        return int(self._w.native.Handle.ToInt64())
+
+    @staticmethod
+    def _u():
+        import ctypes
+        return ctypes.windll.user32
+
+    def _rect(self):
+        import ctypes
+        from ctypes import wintypes
+        r = wintypes.RECT()
+        self._u().GetWindowRect(ctypes.c_void_p(self._hwnd()), ctypes.byref(r))
+        return r.left, r.top, r.right - r.left, r.bottom - r.top
+
+    def _set(self, x, y, w, h):
+        self._u().SetWindowPos(__import__("ctypes").c_void_p(self._hwnd()), None, int(x), int(y),
+                               int(w), int(h), 0x0004 | 0x0010)    # SWP_NOZORDER | SWP_NOACTIVATE
+
+    def _work_area(self):
+        import ctypes
+        from ctypes import wintypes
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+        u = self._u()
+        u.MonitorFromWindow.restype = ctypes.c_void_p
+        mon = u.MonitorFromWindow(ctypes.c_void_p(self._hwnd()), 2)       # MONITOR_DEFAULTTONEAREST
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        u.GetMonitorInfoW(ctypes.c_void_p(mon), ctypes.byref(mi))
+        r = mi.rcWork
+        return r.left, r.top, r.right - r.left, r.bottom - r.top
+
+    def _polish(self):
+        try:   # esquinas redondeadas de Windows 11
+            import ctypes
+            v = ctypes.c_int(2)
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(ctypes.c_void_p(self._hwnd()), 33, ctypes.byref(v), 4)
+        except Exception:
+            pass
+
+    def _apply_max(self, on: bool):
+        if on:
+            if not self._max:
+                self._normal = self._rect()
+            self._set(*self._work_area())
+        elif self._normal:
+            self._set(*self._normal)
+        self._max = on
+
+    # ── llamados desde la pagina ──
+    def win_minimize(self):
+        self._w.minimize()
+
+    def win_toggle_maximize(self):
+        self._apply_max(not self._max)
+        return self._max
+
+    def win_is_maximized(self):
+        return self._max
+
+    def win_close(self):
+        self._w.destroy()
+
+    def win_start_resize(self, edge):
+        """Arrastre de un borde: sigue el raton hasta soltar el boton."""
+        if self._max or self._resizing:
+            return
+        self._resizing = True
+        threading.Thread(target=self._resize_loop, args=(str(edge),), daemon=True).start()
+
+    def _resize_loop(self, edge):
+        import ctypes
+        from ctypes import wintypes
+        u = self._u()
+        pt = wintypes.POINT()
+        u.GetCursorPos(ctypes.byref(pt))
+        sx, sy = pt.x, pt.y
+        x0, y0, w0, h0 = self._rect()
+        last = None
+        try:
+            while u.GetAsyncKeyState(0x01) & 0x8000:            # boton izquierdo apretado
+                u.GetCursorPos(ctypes.byref(pt))
+                dx, dy = pt.x - sx, pt.y - sy
+                x, y, w, h = x0, y0, w0, h0
+                if "e" in edge:
+                    w = max(self.MIN_W, w0 + dx)
+                if "s" in edge:
+                    h = max(self.MIN_H, h0 + dy)
+                if "w" in edge:
+                    w = max(self.MIN_W, w0 - dx)
+                    x = x0 + w0 - w
+                if "n" in edge:
+                    h = max(self.MIN_H, h0 - dy)
+                    y = y0 + h0 - h
+                if (x, y, w, h) != last:
+                    self._set(x, y, w, h)
+                    last = (x, y, w, h)
+                time.sleep(0.012)
+        finally:
+            self._resizing = False
+
+    def geometry(self):
+        """Para recordar la ventana al cerrar: (x, y, w, h) normal y si estaba maximizada."""
+        try:
+            return (self._normal if self._max else self._rect()), self._max
+        except Exception:
+            return self._normal, self._max
+
+
+# Barra propia dentro de la app (solo Windows): zona para arrastrar + botones.
+_CHROME_JS = r"""
+(function () {
+  if (window.__crChrome || !window.pywebview || !window.pywebview.api || !pywebview.api.win_close) return;
+  window.__crChrome = true;
+  const api = pywebview.api;
+  const ink = () => getComputedStyle(document.body || document.documentElement).color || "#334";
+  const css = `
+  #cr-drag{position:fixed;top:0;left:0;right:150px;height:30px;z-index:2147483000;cursor:default}
+  #cr-btns{position:fixed;top:8px;right:10px;z-index:2147483001;display:flex;gap:2px;padding:3px;border-radius:12px;
+    background:rgba(128,128,140,.16);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px);
+    box-shadow:inset 0 0 0 1px rgba(128,128,140,.22),0 6px 18px -8px rgba(0,0,0,.35);transition:opacity .2s}
+  #cr-btns button{all:unset;width:34px;height:26px;display:grid;place-items:center;border-radius:9px;cursor:pointer;
+    color:var(--cr-ink);opacity:.82;transition:background .15s,opacity .15s,color .15s}
+  #cr-btns button:hover{background:rgba(128,128,140,.24);opacity:1}
+  #cr-btns button.x:hover{background:#e5484d;color:#fff}
+  #cr-btns svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .cr-edge{position:fixed;z-index:2147482999}
+  .cr-n{top:0;left:8px;right:8px;height:5px;cursor:ns-resize}.cr-s{bottom:0;left:8px;right:8px;height:6px;cursor:ns-resize}
+  .cr-w{left:0;top:8px;bottom:8px;width:6px;cursor:ew-resize}.cr-e{right:0;top:8px;bottom:8px;width:6px;cursor:ew-resize}
+  .cr-nw{top:0;left:0;width:10px;height:10px;cursor:nwse-resize}.cr-ne{top:0;right:0;width:10px;height:10px;cursor:nesw-resize}
+  .cr-sw{bottom:0;left:0;width:12px;height:12px;cursor:nesw-resize}.cr-se{bottom:0;right:0;width:12px;height:12px;cursor:nwse-resize}
+  html.cr-max .cr-edge{display:none}`;
+  const st = document.createElement("style"); st.textContent = css;
+  const I = {
+    min: '<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>',
+    max: '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/></svg>',
+    res: '<svg viewBox="0 0 24 24"><rect x="5" y="9" width="10" height="10" rx="2"/><path d="M9 9V7a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-2"/></svg>',
+    x:   '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>'};
+  const drag = document.createElement("div"); drag.id = "cr-drag"; drag.className = "pywebview-drag-region";
+  const btns = document.createElement("div"); btns.id = "cr-btns";
+  btns.innerHTML = `<button data-a="min" title="Minimizar" aria-label="Minimizar">${I.min}</button>`
+    + `<button data-a="max" title="Maximizar" aria-label="Maximizar">${I.max}</button>`
+    + `<button data-a="close" class="x" title="Cerrar" aria-label="Cerrar">${I.x}</button>`;
+  const root = document.documentElement;
+  root.appendChild(st); root.appendChild(drag); root.appendChild(btns);
+  ["n","s","w","e","nw","ne","sw","se"].forEach(e => {
+    const d = document.createElement("div"); d.className = "cr-edge cr-" + e;
+    d.addEventListener("mousedown", ev => { if (ev.button === 0) { ev.preventDefault(); api.win_start_resize(e); } });
+    root.appendChild(d);
+  });
+  const paintMax = (m) => {
+    root.classList.toggle("cr-max", !!m);
+    const b = btns.querySelector('[data-a="max"]');
+    b.innerHTML = m ? I.res : I.max; b.title = m ? "Restaurar" : "Maximizar"; b.setAttribute("aria-label", b.title);
+  };
+  const toggle = async () => paintMax(await api.win_toggle_maximize());
+  btns.addEventListener("click", ev => {
+    const a = ev.target.closest("button")?.dataset.a;
+    if (a === "min") api.win_minimize(); else if (a === "max") toggle(); else if (a === "close") api.win_close();
+  });
+  drag.addEventListener("dblclick", toggle);
+  const tint = () => root.style.setProperty("--cr-ink", ink());
+  tint(); setInterval(tint, 1500);                     // sigue el tema (claro / oscuro) de la app
+  api.win_is_maximized().then(paintMax);
+})();
+"""
+
+
 def app_window(url: str, on_closed=None):
-    """Abre la app en una ventana propia del sistema. Recuerda tamano, posicion y si
-    estaba maximizada (la primera vez se abre maximizada)."""
+    """Abre la app en su ventana. En Windows sin la barra del sistema (botones propios dentro
+    de la app); en Mac con la barra nativa (semaforo). Recuerda tamano, posicion y si estaba
+    maximizada (la primera vez se abre maximizada)."""
     import webview
     g = _load_geom()
     state = {"max": g.get("maximized", True)}
     kw = dict(width=g.get("width", 1440), height=g.get("height", 900), min_size=(1024, 680),
-              resizable=True, maximized=state["max"], background_color="#0b0a10")
-    if g:
-        kw.update(x=g["x"], y=g["y"])
+              resizable=True, background_color="#0b0a10")
+    chrome = None
+    if IS_WIN:
+        # el tamano guardado esta en pixeles reales (Win32): se aplica al mostrarse
+        chrome = _WinChrome(state["max"], (g["x"], g["y"], g["width"], g["height"]) if g else None)
+        kw.update(width=1440, height=900, frameless=True, easy_drag=False, js_api=chrome)
+    else:
+        if g:
+            kw.update(x=g["x"], y=g["y"])
+        kw.update(maximized=state["max"])
     w = webview.create_window(APP_TITLE, url, **kw)
+
+    if chrome:
+        chrome._w = w
+
+        def shown(*_):
+            chrome._polish()
+            if state["max"]:
+                chrome._max = False
+                chrome._apply_max(True)
+            elif chrome._normal:
+                chrome._set(*chrome._normal)
+
+        def loaded(*_):
+            try:
+                w.evaluate_js(_CHROME_JS)
+            except Exception:
+                pass
+        w.events.shown += shown
+        w.events.loaded += loaded
 
     def maximized(*_):
         state["max"] = True
@@ -172,7 +387,12 @@ def app_window(url: str, on_closed=None):
     def save():
         try:
             old = _load_geom() or {"x": 80, "y": 60, "width": 1440, "height": 900}
-            if state["max"]:
+            if chrome:
+                rect, is_max = chrome.geometry()
+                if rect and rect[0] > -10000 and rect[1] > -10000:
+                    old = {"x": rect[0], "y": rect[1], "width": rect[2], "height": rect[3]}
+                data = dict(old, maximized=bool(is_max))
+            elif state["max"]:
                 data = dict(old, maximized=True)
             elif w.x <= -10000 or w.y <= -10000:        # cerrada minimizada: posicion falsa
                 data = old
