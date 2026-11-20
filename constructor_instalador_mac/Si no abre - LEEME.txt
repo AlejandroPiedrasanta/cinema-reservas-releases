@@ -1,0 +1,24 @@
+CINEMA RESERVAS PARA MAC — SI DICE QUE «NO SE PUEDE ABRIR»
+
+La primera vez, macOS puede avisar que no puede verificar al desarrollador.
+La app es segura; solo hay que autorizarla UNA VEZ:
+
+1) Arrastra «Cinema Reservas» a la carpeta Aplicaciones.
+2) Ábrela con doble clic. Si sale el aviso, pulsa «Aceptar» o «Listo».
+
+macOS 15 (Sequoia) o más nuevo:
+3) Abre  Ajustes del Sistema → Privacidad y seguridad.
+4) Baja hasta «Seguridad»: verás «Se bloqueó Cinema Reservas…».
+   Pulsa «Abrir igualmente» y escribe tu contraseña de la Mac.
+5) Vuelve a abrir la app y pulsa «Abrir».
+
+macOS 14 (Sonoma) o anterior:
+3) En Aplicaciones, haz clic derecho (o Control + clic) sobre la app → «Abrir».
+4) En el aviso, pulsa «Abrir».
+
+Plan B (Terminal, cualquier macOS):
+   xattr -cr "/Applications/Cinema Reservas.app"
+Después ábrela normalmente.
+
+Para cerrar la app por completo usa «Detener Cinema Reservas».
+Tus datos quedan en: ~/Library/Application Support/CinemaProductions/

@@ -105,6 +105,10 @@ function toast({
   ...props
 }) {
   const id = genId()
+  // Mientras el servidor está reconectando no se apilan avisos rojos: ya se ve «Reconectando…»
+  if (props.variant === "destructive" && typeof window !== "undefined" && window.__cpServerDown) {
+    return { id, dismiss: () => {}, update: () => {} }
+  }
 
   const update = (props) =>
     dispatch({

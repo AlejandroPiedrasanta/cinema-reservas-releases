@@ -1,8 +1,7 @@
 # Instalador para Mac (.dmg)
 
-**Estado:** el codigo esta escrito, pero NO se ha podido fabricar ni probar en un Mac real
-(el .dmg solo se puede construir en macOS). La primera vez que lo fabriques, revisa la prueba
-del paso 3 de `build_mac.sh`: si algo falla, el log queda en pantalla.
+**Estado:** se fabrica y se prueba en GitHub en cada versión (Mac con chip Apple y Mac con Intel):
+la app abre su ventana real, pide licencia, arranca el servidor y se prueba la actualización automática.
 
 ## Que recibe el cliente
 Un `.dmg` por tipo de Mac:
@@ -41,8 +40,9 @@ El `.dmg` queda en `1_INSTALADOR_PARA_CLIENTES`.
 ## Aviso importante: "no se puede abrir" (Gatekeeper)
 Sin cuenta de Apple Developer ($99/año) la app NO esta firmada ni notarizada. Al descargarla de
 internet, macOS dira *"no se puede abrir porque no se puede verificar al desarrollador"*.
-El cliente debe hacer **una sola vez**: clic derecho sobre la app → **Abrir** → **Abrir**
-(o en Terminal: `xattr -cr "/Applications/Cinema Reservas.app"`).
+El DMG trae **«Si no abre - LEEME.txt»** con los pasos. En macOS 15 (Sequoia) o más nuevo:
+**Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente»**. En macOS 14 o anterior:
+clic derecho sobre la app → **Abrir** → **Abrir**. Plan B: `xattr -cr "/Applications/Cinema Reservas.app"`.
 Para evitarlo hay que firmar y notarizar: guarda el certificado "Developer ID Application" como secrets
 (`DEVELOPER_ID`, `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`) y el workflow ya firma el `.app` y el `.dmg`.
 (La notarizacion con `notarytool` no esta incluida: añadirla es el ultimo paso para cero avisos.)

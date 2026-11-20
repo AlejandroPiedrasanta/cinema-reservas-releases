@@ -55,6 +55,15 @@ if (typeof window !== "undefined" && window.fetch && !window.__cpFetchPatched) {
 api.interceptors.response.use(
   (r) => r,
   async (error) => {
+    // Sin respuesta = el servidor interno no está disponible: un solo aviso de «Reconectando…»
+    const st0 = error?.response?.status;
+    // 500 vacío = el proxy de desarrollo no encuentra el servidor (un error real del servidor trae mensaje)
+    const emptyBody = error?.response && (error.response.data === "" || error.response.data == null);
+    const unreachable = (!error?.response && error?.code !== "ERR_CANCELED") || st0 === 502 || st0 === 503 || st0 === 504 || (st0 === 500 && emptyBody);
+    if (unreachable && typeof window !== "undefined") {
+      window.__cpServerDown = Date.now();
+      try { window.dispatchEvent(new CustomEvent("cp:server-down")); } catch { /* nada */ }
+    }
     try {
       const cfg = error?.config || {};
       const url = cfg.url || "";

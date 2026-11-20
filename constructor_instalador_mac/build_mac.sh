@@ -45,7 +45,16 @@ pset CFBundleShortVersionString "$VER" string
 pset CFBundleVersion "$VER" string
 pset NSHumanReadableCopyright "© $(date +%Y) Cinema Productions" string
 pset LSApplicationCategoryType "public.app-category.business" string
-pset LSMinimumSystemVersion "11.0" string
+# Sistema minimo REAL: la version de macOS mas alta que exigen las piezas incluidas
+# (sin contar Qt, que es solo la interfaz de respaldo). Asi un Mac demasiado viejo ve el
+# aviso normal de macOS en vez de una app que no abre.
+MINOS=$(find "dist/$APP" -type f \( -name "*.so" -o -name "*.dylib" -o -perm -u+x \) ! -path "*PySide6*" ! -path "*/Qt*" -print0 \
+  | xargs -0 -n1 otool -l 2>/dev/null \
+  | awk '/LC_BUILD_VERSION/{b=1} b&&/ minos /{print $2; b=0} /LC_VERSION_MIN_MACOSX/{v=1} v&&/ version /{print $2; v=0}' \
+  | sort -t. -k1,1n -k2,2n | tail -1)
+MINOS=${MINOS:-11.0}
+echo "   macOS minimo requerido por la app: $MINOS"
+pset LSMinimumSystemVersion "$MINOS" string
 pset NSHighResolutionCapable true bool
 
 echo "[2/4] Firmando…"
@@ -71,12 +80,14 @@ echo "   servidor OK"
 echo "[4/4] Creando el DMG…"
 mkdir -p "$OUT"
 cp "Detener Cinema Reservas.command" dist/ && chmod +x "dist/Detener Cinema Reservas.command"
+cp "Si no abre - LEEME.txt" dist/
 DMG="$OUT/CinemaReservas-$VER-$ARCH.dmg"
 rm -f "$DMG"
 create-dmg --volname "Cinema Reservas" --background dmg_background.png \
   --window-pos 200 120 --window-size 660 400 --icon-size 110 --text-size 13 \
   --icon "$APP" 180 200 --hide-extension "$APP" --app-drop-link 480 200 \
   --icon "Detener Cinema Reservas.command" 330 320 \
+  --icon "Si no abre - LEEME.txt" 520 320 \
   "$DMG" "dist/"
 if [ -n "${DEVELOPER_ID:-}" ]; then codesign --force --sign "$DEVELOPER_ID" --timestamp "$DMG"; fi
 echo "LISTO -> $DMG"

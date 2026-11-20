@@ -18,6 +18,7 @@ import { Toaster } from "@/components/ui/toaster";
 import LockScreen from "@/components/LockScreen";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import PageErrorBoundary from "@/components/PageErrorBoundary";
+import ServerStatus from "@/components/ServerStatus";
 import IncidentsNotifier from "@/components/IncidentsNotifier";
 import { installGlobalErrorHandlers } from "@/lib/errorReporter";
 import { useEffect } from "react";
@@ -177,6 +178,7 @@ function ProtectedApp() {
           </Layout>
         </BrowserRouter>
         <Toaster />
+        <ServerStatus />
       </div>
     </MotionConfig>
   );
