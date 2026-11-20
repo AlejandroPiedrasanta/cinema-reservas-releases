@@ -1,15 +1,24 @@
-# Fabrica el instalador de macOS (.dmg) para Apple Silicon e Intel.
-# Uso: sube 3_CODIGO_FUENTE a un repo (privado) de GitHub -> pestaña Actions -> "Instalador macOS" -> Run workflow.
-# El .dmg aparece en "Artifacts" al terminar (~10 min).
+# Fabrica los instaladores de macOS (.dmg) y los adjunta al release.
+#
+# Se ejecuta solo:
+#   - al publicar un release en GitHub (adjunta los .dmg a ese release), o
+#   - a mano: pestaña Actions -> "Instalador macOS" -> Run workflow (pide el tag, p. ej. v1.20.85).
 #
 # Firma opcional (sin esto el .dmg funciona igual, pero macOS pide "clic derecho > Abrir" la 1a vez):
 #   Secrets del repo: DEVELOPER_ID  = "Developer ID Application: Tu Nombre (TEAMID)"
 #                     MACOS_CERT_P12 (base64 del .p12) y MACOS_CERT_PASSWORD
 name: Instalador macOS
 on:
+  release:
+    types: [published]
   workflow_dispatch:
-  push:
-    tags: ["mac-v*"]
+    inputs:
+      tag:
+        description: "Release al que adjuntar los .dmg (p. ej. v1.20.84)"
+        required: true
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -17,11 +26,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14,        arch: arm64  }   # Apple Silicon (M1/M2/M3/M4)
+          - { os: macos-15,        arch: arm64  }   # Apple Silicon (M1/M2/M3/M4)
           - { os: macos-15-intel,  arch: x86_64 }   # Mac con Intel
     runs-on: ${{ matrix.os }}
     env:
       MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,7 +59,7 @@ jobs:
         run: |
           chmod +x build_mac.sh
           ./build_mac.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: CinemaReservas-macOS-${{ matrix.arch }}
-          path: dmg/*.dmg
+      - name: Adjuntar al release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dmg/*.dmg --clobber --repo "${{ github.repository }}"
