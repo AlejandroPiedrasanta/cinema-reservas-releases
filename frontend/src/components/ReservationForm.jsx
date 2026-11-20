@@ -5,7 +5,7 @@ import {
   ArrowLeft, X, Sparkles, User, Phone, Mail, Calendar as CalIcon, Clock, MapPin,
   Users, DollarSign, Package, StickyNote, PartyPopper, Heart, Cake, Briefcase,
   Mic2, Star, CheckCircle2, Loader2, Wallet, Tag, Pencil, RotateCcw, Zap,
-  Camera, Video, Check, AlertTriangle, ChevronLeft, ChevronRight, ChevronDown
+  Camera, Video, Check, AlertTriangle, Plus, Trash2, Copy, ChevronLeft, ChevronRight, ChevronDown
 } from "lucide-react";
 import { motion, AnimatePresence, MotionConfig, animate as fmAnimate } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
@@ -62,8 +62,14 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
   ];
   const [saving, setSaving] = useState(false);
   const [socios, setSocios] = useState([]);
-  const [partnerSocioId, setPartnerSocioId] = useState("");
-  const [partnerPayment, setPartnerPayment] = useState("");
+  // Equipo (varios socios con su pago) y lugares extra
+  const [team, setTeam] = useState([]);
+  const addTeam = () => setTeam((t) => [...t, { key: Date.now() + Math.random(), socio_id: "", payment: "" }]);
+  const updTeam = (key, patch) => setTeam((t) => t.map((m) => (m.key === key ? { ...m, ...patch } : m)));
+  const delTeam = (key) => setTeam((t) => t.filter((m) => m.key !== key));
+  const [locs, setLocs] = useState({ maquillaje: "", ceremonia: "", fiesta: "" });
+  const [showLocs, setShowLocs] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Cargar socios (solo en modo creación; en edición ya se gestiona desde Socios.jsx)
   useEffect(() => {
@@ -184,18 +190,25 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
     if (form.status === "Pagado") {
       payload.advance_paid = parseFloat(form.total_amount) || 0;
     }
-    // Al crear: si se eligió un socio, adjuntarlo como assigned_partners
-    if (!isEdit && partnerSocioId) {
-      const soc = socios.find(s => s.id === partnerSocioId);
-      payload.assigned_partners = [{
-        socio_id: partnerSocioId,
-        name: soc?.name || "",
-        role: soc?.role || "Fotógrafo",
-        photo: soc?.photo || null,
-        photo_content_type: soc?.photo_content_type || null,
-        payment: parseFloat(partnerPayment) || 0,
-        payment_status: "Pendiente",
-      }];
+    // Al crear: equipo de trabajo y lugares extra
+    if (!isEdit) {
+      const members = team.filter((m) => m.socio_id);
+      if (members.length) {
+        payload.assigned_partners = members.map((m) => {
+          const soc = socios.find((x) => x.id === m.socio_id);
+          return {
+            socio_id: m.socio_id, name: soc?.name || "", role: soc?.role || "Fotógrafo",
+            photo: soc?.photo || null, photo_content_type: soc?.photo_content_type || null,
+            payment: parseFloat(m.payment) || 0, payment_status: "Pendiente",
+          };
+        });
+      }
+      const filled = LOC_TYPES.map((l) => ({ l, v: (locs[l.key] || "").trim() })).filter((x) => x.v);
+      if (filled.length) {
+        payload.locations = filled.map(({ l, v }) => (/^https?:\/\//i.test(v)
+          ? { type: l.key, address: "", waze_url: v }
+          : { type: l.key, address: v, waze_url: "" }));
+      }
     }
     try {
       if (isEdit) {
@@ -281,6 +294,33 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
     { k: "total", label: "Monto", ok: totalNum > 0 },
   ];
   const allReady = reqDone.every((r) => r.ok);
+  const teamCost = team.reduce((acc, m) => acc + (m.socio_id ? (parseFloat(m.payment) || 0) : 0), 0);
+  const profit = totalNum - teamCost;
+  const countdown = form.event_date ? relDays(form.event_date) : "";
+  const clientKey = form.client_name.trim().toLowerCase();
+  const clientHist = !isEdit && clientKey.length > 2 ? others.filter((r) => (r.client_name || "").trim().toLowerCase() === clientKey) : [];
+  const locCount = Object.values(locs).filter((v) => v.trim()).length;
+
+  const copyConfirm = async () => {
+    const lines = [
+      `¡Hola ${form.client_name.trim()}! Te confirmamos tu reserva:`,
+      `🎉 ${getEventTypeName(form.event_type)}${form.package_type ? ` · Paquete ${form.package_type}` : ""}`,
+      `📅 ${fechaLarga(form.event_date)}${form.event_time ? ` a las ${form.event_time}` : ""}`,
+      form.venue && `📍 ${form.venue}`,
+      `💰 Total: ${formatCurrency(totalNum)}`,
+      `✅ Anticipo: ${formatCurrency(advNum)}`,
+      `🧾 Saldo pendiente: ${formatCurrency(balance)}`,
+      "",
+      "¡Gracias por confiar en nosotros!",
+    ].filter((x) => x !== false && x !== undefined && x !== null);
+    const text = lines.join("\n");
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch { /* nada */ } ta.remove();
+    }
+    setCopied(true); setTimeout(() => setCopied(false), 1800);
+  };
   const fullyPaid = totalNum > 0 && progress >= 100;
   const summaryBits = [getEventTypeName(form.event_type), form.event_date && fechaCorta(form.event_date)].filter(Boolean).join(" · ");
 
@@ -291,7 +331,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
         key="rf-overlay"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         transition={{ duration: 0.18 }}
-        className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center overflow-y-auto py-6 px-4 bg-slate-900/40"
+        className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto py-6 px-4 bg-slate-900/40"
         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         data-testid="reservation-form"
       >
@@ -300,7 +340,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.97, y: 10, transition: { duration: 0.16 } }}
           transition={{ type: "spring", stiffness: 340, damping: 30 }}
-          className="cp-rf relative w-full max-w-5xl flex flex-col rounded-[28px] bg-white border border-white shadow-[0_30px_80px_-24px_rgba(15,23,42,0.45)]"
+          className="cp-rf relative w-full max-w-5xl my-auto flex flex-col rounded-[28px] bg-white border border-white shadow-[0_30px_80px_-24px_rgba(15,23,42,0.45)]"
           onClick={(e) => e.stopPropagation()}
         >
           <button type="button" onClick={onClose} aria-label="Cerrar" data-testid="cancel-form-btn"
@@ -394,6 +434,14 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                   <ClientAutocomplete value={form.client_name} clients={clients}
                     onChange={(v) => setForm((p) => ({ ...p, client_name: v }))}
                     onPick={(c) => setForm((p) => ({ ...p, client_name: c.name, client_phone: p.client_phone || c.phone, client_email: p.client_email || c.email }))} />
+                  <AnimatePresence>
+                    {clientHist.length > 0 && (
+                      <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} data-testid="frequent-client"
+                        className="mt-1.5 flex items-center gap-1 text-[11px] font-bold text-violet-600">
+                        <Star size={12} /> Cliente frecuente · {clientHist.length} reserva{clientHist.length === 1 ? "" : "s"} antes
+                      </motion.p>
+                    )}
+                  </AnimatePresence>
                 </RField>
                 {ff.phone !== false && (
                   <RField label={f.phone} dirty={isDirtyField("client_phone")} testId="field-phone">
@@ -414,12 +462,6 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                     <RInput icon={MapPin} value={form.venue} onChange={set("venue")} placeholder="Salón, hotel o dirección" data-testid="input-venue" />
                   </RField>
                 )}
-                {!isEdit && (
-                  <motion.div variants={ITEM}>
-                    <PartnerPickerField socios={socios} value={partnerSocioId} onChange={setPartnerSocioId}
-                      payment={partnerPayment} onPaymentChange={setPartnerPayment} currencySymbol={currencySymbol} />
-                  </motion.div>
-                )}
                 {ff.email !== false && (
                   <RField label={f.email} dirty={isDirtyField("client_email")} testId="field-email">
                     <RInput icon={Mail} type="email" value={form.client_email} onChange={set("client_email")} placeholder="correo@email.com" data-testid="input-email" />
@@ -438,36 +480,143 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                     initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0, x: [0, -6, 6, -3, 3, 0] }} exit={{ opacity: 0, y: -4 }}
                     transition={{ duration: 0.45 }}
                     className="cp-rf-note flex items-center gap-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                    <AlertTriangle size={14} className="shrink-0" /> Ese día ya tienes {sameDay.length === 1 ? `1 evento (${sameDay[0].client_name})` : `${sameDay.length} eventos`}
+                    <AlertTriangle size={14} className="shrink-0" /> Ese día ya tienes {sameDay.length === 1 ? `1 evento (${sameDay[0].client_name})` : `${sameDay.length} eventos`}<span className="ml-auto font-bold opacity-80 whitespace-nowrap">{countdown}</span>
                   </motion.p>
                 ) : (
                   <motion.p key={"free" + form.event_date}
                     initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.22 }}
                     className="cp-rf-note flex items-center gap-2 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
-                    <motion.span className="flex" initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 500, damping: 18, delay: 0.08 }}><CheckCircle2 size={14} /></motion.span> Día libre, no tienes otros eventos
+                    <motion.span className="flex" initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 500, damping: 18, delay: 0.08 }}><CheckCircle2 size={14} /></motion.span> Día libre, no tienes otros eventos<span className="ml-auto font-bold opacity-80 whitespace-nowrap">{countdown}</span>
                   </motion.p>
                 ))}
               </AnimatePresence>
 
-              {/* Compatibilidad: campos ocultos */}
-              <select value={form.package_type} onChange={set("package_type")} data-testid="input-package" className="hidden">
-                <option value="">— Sin paquete —</option>
-                <option value="Básico">Básico</option>
-                <option value="Intermedio">Intermedio</option>
-                <option value="Completo">Completo</option>
-              </select>
-              <input value={form.notes} onChange={set("notes")} data-testid="input-notes" className="hidden" />
+              {/* Paquete */}
+              <motion.div variants={ITEM}>
+                <RLabel>Paquete</RLabel>
+                <div className="flex flex-wrap gap-2">
+                  {PACKAGES.map((pk) => {
+                    const on = (form.package_type || "") === pk.key; const PkIcon = pk.icon;
+                    return (
+                      <motion.button key={pk.key || "none"} type="button" whileTap={{ scale: 0.95 }}
+                        onClick={() => setForm((x) => ({ ...x, package_type: pk.key }))} data-testid={`package-${pk.key || "none"}`}
+                        className={`relative px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors ${on ? "border-transparent text-white" : "border-slate-200 text-slate-500 hover:border-slate-300 bg-white"}`}>
+                        {on && <motion.span layoutId="rf-pkg-pill" className="absolute inset-0 rounded-xl" style={{ background: evCfg.fg }} transition={{ type: "spring", stiffness: 500, damping: 34 }} />}
+                        <span className="relative z-10 flex items-center gap-1.5"><PkIcon size={13} /> {pk.label}</span>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+                <select value={form.package_type} onChange={set("package_type")} data-testid="input-package" className="hidden">
+                  {PACKAGES.map((pk) => <option key={pk.key || "none"} value={pk.key}>{pk.label}</option>)}
+                </select>
+              </motion.div>
+
+              {/* Equipo de trabajo */}
+              {!isEdit && (
+                <motion.div variants={ITEM} data-testid="field-partner">
+                  <div className="flex items-center justify-between">
+                    <RLabel>Equipo de trabajo</RLabel>
+                    {teamCost > 0 && <span className="text-[11px] font-bold text-slate-500 mb-1.5 tabular-nums">Total equipo {formatCurrency(teamCost)}</span>}
+                  </div>
+                  <div className="space-y-2">
+                    <AnimatePresence initial={false}>
+                      {team.map((m, i) => {
+                        const taken = team.filter((x) => x.key !== m.key).map((x) => x.socio_id);
+                        const soc = socios.find((x) => x.id === m.socio_id);
+                        return (
+                          <motion.div key={m.key} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.22 }} className="overflow-hidden">
+                            <div className="flex items-center gap-2">
+                              <div className="w-9 h-9 shrink-0 rounded-xl overflow-hidden grid place-items-center text-[11px] font-black text-white"
+                                style={{ background: "linear-gradient(135deg,#8b5cf6,#ec4899)" }}>
+                                {soc?.photo && soc?.photo_content_type
+                                  ? <img src={`data:${soc.photo_content_type};base64,${soc.photo}`} alt="" className="w-full h-full object-cover" />
+                                  : (soc?.name?.charAt(0).toUpperCase() || <Camera size={14} />)}
+                              </div>
+                              <div className="relative flex-1 min-w-0">
+                                <select value={m.socio_id} onChange={(e) => updTeam(m.key, { socio_id: e.target.value })} data-testid={`team-socio-${i}`}
+                                  className="cp-rf-input w-full h-11 appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-500/10">
+                                  <option value="">Elegir persona…</option>
+                                  {socios.filter((x) => !taken.includes(x.id)).map((x) => <option key={x.id} value={x.id}>{x.name}{x.role ? ` · ${x.role}` : ""}</option>)}
+                                </select>
+                                <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                              </div>
+                              <div className="w-28 sm:w-32 flex items-center gap-1 h-11 rounded-xl border border-slate-200 bg-white px-3 cp-rf-input">
+                                <span className="text-xs font-black text-slate-400">{currencySymbol}</span>
+                                <input type="number" min="0" step="0.01" value={m.payment} onChange={(e) => updTeam(m.key, { payment: e.target.value })}
+                                  placeholder="Pago" data-testid={`team-pay-${i}`} className="w-full bg-transparent outline-none text-sm font-bold text-slate-800" />
+                              </div>
+                              <button type="button" onClick={() => delTeam(m.key)} aria-label="Quitar del equipo"
+                                className="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-colors">
+                                <Trash2 size={15} />
+                              </button>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </AnimatePresence>
+                    {socios.length === 0 ? (
+                      <p className="text-xs text-slate-400">Aún no tienes socios. Agrégalos en la sección Socios para asignarlos aquí.</p>
+                    ) : team.length < socios.length && (
+                      <motion.button type="button" onClick={addTeam} data-testid="team-add" whileTap={{ scale: 0.98 }}
+                        className="w-full h-10 rounded-xl border-2 border-dashed border-slate-200 text-xs font-bold text-slate-500 hover:border-violet-300 hover:text-violet-600 flex items-center justify-center gap-1.5 transition-colors">
+                        <Plus size={14} /> {team.length ? "Agregar otra persona" : "Agregar fotógrafo, videógrafo o asistente"}
+                      </motion.button>
+                    )}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Lugares extra */}
+              {!isEdit && (
+                <motion.div variants={ITEM}>
+                  <button type="button" onClick={() => setShowLocs((v) => !v)} data-testid="locs-toggle"
+                    className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors">
+                    <motion.span className="flex" animate={{ rotate: showLocs ? 90 : 0 }}><ChevronRight size={14} /></motion.span>
+                    Más lugares (maquillaje, ceremonia, fiesta)
+                    {locCount > 0 && <span className="px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[10px]">{locCount}</span>}
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {showLocs && (
+                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.25 }} className="overflow-hidden">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-3">
+                          {LOC_TYPES.map((l) => (
+                            <div key={l.key}>
+                              <RLabel>{l.emoji} {l.label}</RLabel>
+                              <RInput icon={MapPin} value={locs[l.key]} onChange={(e) => setLocs((x) => ({ ...x, [l.key]: e.target.value }))}
+                                placeholder="Dirección o link de Maps" data-testid={`loc-${l.key}`} />
+                            </div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              )}
+
+              {/* Notas */}
+              <motion.div variants={ITEM}>
+                <RLabel>Notas</RLabel>
+                <textarea value={form.notes} onChange={set("notes")} rows={3} data-testid="input-notes"
+                  placeholder="Ej.: llevar dron, la novia llega a las 4 p. m., el resto se paga el día del evento…"
+                  className="cp-rf-input w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-500/10 transition resize-none" />
+              </motion.div>
             </motion.form>
 
             {/* Columna derecha: el dinero */}
             <motion.div variants={STAGGER_RIGHT} initial="hidden" animate="show"
-              className="relative overflow-hidden bg-slate-50 border-t md:border-t-0 md:border-l border-slate-100 rounded-b-[28px] md:rounded-bl-none md:rounded-r-[28px] px-6 py-6 flex flex-col gap-4">
+              className="relative bg-slate-50 border-t md:border-t-0 md:border-l border-slate-100 rounded-b-[28px] md:rounded-bl-none md:rounded-r-[28px] px-6 py-6">
               {/* Halo con el color del evento */}
+              <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]">
               <AnimatePresence initial={false}>
                 <motion.div key={evCfg.fg} aria-hidden className="pointer-events-none absolute -top-32 -right-32 w-80 h-80 rounded-full"
                   initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.5 }}
                   style={{ background: `radial-gradient(circle, ${evCfg.fg}2e 0%, transparent 70%)` }} />
               </AnimatePresence>
+              </div>
+              <div className="md:sticky md:top-2 flex flex-col gap-4">
               <motion.p variants={ITEM} className="relative text-[11px] font-black uppercase tracking-wider text-slate-500 h-9 flex items-center">Pago</motion.p>
               <RField label={noReq(f.totalAmount)} req dirty={isDirtyField("total_amount")} testId="field-total">
                 <RInput icon={CurrencyGlyph} type="number" min="0" step="0.01" value={form.total_amount} onChange={setTotal} placeholder="5000" required data-testid="input-total" />
@@ -522,6 +671,22 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                 <p className="text-[11px] text-slate-500 mt-1.5 tabular-nums">{!totalNum ? "Escribe el monto" : fullyPaid ? "Todo cubierto 🎉" : `${Math.round(progress)} % pagado`}</p>
               </motion.div>
 
+              {/* Ganancia después de pagar al equipo */}
+              <AnimatePresence>
+                {teamCost > 0 && totalNum > 0 && (
+                  <motion.div initial={{ opacity: 0, y: 8, height: 0 }} animate={{ opacity: 1, y: 0, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden" data-testid="profit-card">
+                    <div className="rounded-2xl bg-white border border-slate-200 px-4 py-3 text-sm">
+                      <div className="flex justify-between text-slate-500"><span>Pagos al equipo</span><span className="tabular-nums">− {formatCurrency(teamCost)}</span></div>
+                      <div className="flex justify-between font-black text-slate-900 mt-1">
+                        <span>Te queda</span>
+                        <span className={`tabular-nums ${profit < 0 ? "text-rose-600" : "text-emerald-600"}`}><AnimatedMoney value={profit} show format={formatCurrency} /></span>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               {/* Estado */}
               <motion.div variants={ITEM} className="inline-flex self-start p-1 rounded-full bg-white border border-slate-200">
                 {STATUS_OPTIONS.map((s) => {
@@ -545,7 +710,24 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
               </select>
 
               {/* Lo que falta + guardar */}
-              <motion.div variants={ITEM} className="mt-auto pt-2">
+              <motion.button variants={ITEM} type="button" onClick={copyConfirm} disabled={!allReady} data-testid="copy-confirmation"
+                whileTap={{ scale: 0.97 }}
+                title={allReady ? "Copia un mensaje listo para mandar por WhatsApp" : "Llena cliente, fecha y monto primero"}
+                className="w-full h-10 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-600 hover:border-slate-400 disabled:opacity-40 flex items-center justify-center gap-1.5 transition-colors">
+                <AnimatePresence mode="wait" initial={false}>
+                  {copied ? (
+                    <motion.span key="ok" className="flex items-center gap-1.5 text-emerald-600" initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ opacity: 0 }}>
+                      <Check size={14} strokeWidth={3} /> Copiado, pégalo en WhatsApp
+                    </motion.span>
+                  ) : (
+                    <motion.span key="copy" className="flex items-center gap-1.5" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                      <Copy size={13} /> Copiar confirmación para el cliente
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </motion.button>
+
+              <motion.div variants={ITEM} className="pt-1">
                 <div className="flex flex-wrap items-center gap-1.5 mb-3" data-testid="required-checklist">
                   {reqDone.map((r) => (
                     <span key={r.k}
@@ -575,6 +757,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                   {allReady ? "Todo listo · Ctrl + Enter para guardar" : "Ctrl + Enter para guardar · Esc para cerrar"}
                 </p>
               </motion.div>
+              </div>
             </motion.div>
           </div>
         </motion.div>
@@ -593,6 +776,21 @@ function fechaLarga(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   const t = `${DIAS[new Date(y, m - 1, d).getDay()]} ${d} de ${MESES[m - 1]} ${y}`;
   return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+const LOC_TYPES = [
+  { key: "maquillaje", label: "Maquillaje", emoji: "💄" },
+  { key: "ceremonia",  label: "Ceremonia",  emoji: "⛪" },
+  { key: "fiesta",     label: "Fiesta",     emoji: "🎉" },
+];
+function relDays(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  const n = Math.round((new Date(y, m - 1, d) - t) / 86400000);
+  if (n === 0) return "es hoy";
+  if (n === 1) return "es mañana";
+  if (n > 1) return `faltan ${n} días`;
+  return n === -1 ? "fue ayer" : `fue hace ${-n} días`;
 }
 
 const ITEM = {
