@@ -1441,11 +1441,22 @@ export default function DatabasePage() {
                   {!isCloud && (!cloudPreset || (cloudCheck && cloudCheck.error)) && !showFactoryCTA && (
                     <div className="mt-5 flex items-center gap-2.5 rounded-2xl bg-slate-50 border border-slate-200 px-4 py-2.5">
                       <AlertCircle size={13} className="text-slate-500 shrink-0" />
-                      <p className="text-[11px] font-bold text-slate-600">
+                      <p className="text-[11px] font-bold text-slate-600 flex-1">
                         {cloudCheck?.error
                           ? "No se pudo conectar con la nube para comparar. Revisa tu internet."
-                          : "Aún no tienes una base de datos en la nube configurada."}
+                          : "Aún no tienes una base de datos en la nube configurada. Es opcional: también puedes usar tu NAS."}
                       </p>
+                      {!cloudCheck?.error && (
+                        <button type="button" data-testid="db-goto-connect"
+                          onClick={() => {
+                            setOpenBlocks(p => ({ ...p, conn: true }));
+                            setTimeout(() => document.querySelector('[data-testid="db-change-connection"]')
+                              ?.scrollIntoView({ behavior: "smooth", block: "center" }), 350);
+                          }}
+                          className="shrink-0 inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-slate-700 hover:text-slate-900 px-2.5 py-1.5 rounded-full bg-white border border-slate-200 hover:border-slate-300 transition-colors">
+                          Conectar <ArrowRight size={11} />
+                        </button>
+                      )}
                     </div>
                   )}
 

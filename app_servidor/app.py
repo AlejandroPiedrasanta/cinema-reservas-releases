@@ -202,7 +202,8 @@ def _deserialize_doc(doc: dict) -> dict:
 #     (cinema_data.danado-<fecha>.json); nunca se sobrescribe con una base vacia.
 #   · Varios cambios seguidos se agrupan en un solo guardado.
 DATA_BAK = DATA_FILE.with_name(DATA_FILE.name + '.bak')
-EMBEDDED_COLLECTIONS = ['reservations', 'socios', 'app_settings', 'saved_themes', 'metas']
+EMBEDDED_COLLECTIONS = ['reservations', 'socios', 'app_settings', 'saved_themes', 'metas',
+                        'reminder_log', 'reminder_sched']   # avisos ya mostrados: no repetirlos al reabrir
 _save_lock = asyncio.Lock()
 _save_pending = False
 
@@ -1890,7 +1891,7 @@ def _managed_ssl_ctx():
         return ssl.create_default_context()
 
 
-_managed_release_cache = {"ts": 0.0, "data": {}}
+_managed_release_cache = {"ts": 0.0, "data": {}, "list": [], "list_ts": 0.0}
 
 
 async def _find_managed_release(fresh: bool = False) -> dict:
@@ -1917,6 +1918,8 @@ async def _find_managed_release(fresh: bool = False) -> dict:
         # p. ej. limite de 60 consultas/hora por IP de la API de GitHub: plan B sin API
         logger.warning(f"No se pudieron consultar las actualizaciones ({MANAGED_UPDATE_REPO}): {e}")
         releases = []
+    if isinstance(releases, list) and releases:
+        _managed_release_cache.update(list=releases, list_ts=time.time())
     best = {}
     for rel in releases if isinstance(releases, list) else []:
         if rel.get("draft") or rel.get("prerelease"):
@@ -3890,11 +3893,42 @@ async def _fetch_gh_tag_records_local(owner: str, repo: str, token: str) -> list
         _gh_hist_cache["loading"] = False
 
 
+async def _managed_history() -> list:
+    """Instalacion con licencia: versiones publicadas en el repo publico de releases.
+    Reutiliza la consulta del buscador de actualizaciones (no gasta consultas extra)."""
+    if time.time() - _managed_release_cache.get("list_ts", 0) > 600:
+        await _find_managed_release()
+    out = []
+    for rel in _managed_release_cache.get("list") or []:
+        if rel.get("draft") or rel.get("prerelease"):
+            continue
+        v = (rel.get("tag_name") or "").lstrip("v")
+        if not v:
+            continue
+        mine = next((a for a in rel.get("assets") or [] if _managed_asset_ok(a.get("name"))), None)
+        out.append({
+            "id": rel.get("tag_name"), "version": v, "filename": (mine or {}).get("name", ""),
+            "notes": "" if (rel.get("name") or "").replace("Cinema Reservas", "").strip().lstrip("v") == v
+                     else (rel.get("name") or "").replace("Cinema Reservas", "").strip(),
+            "channel": "stable", "file_size": (mine or {}).get("size", 0),
+            "created_at": rel.get("published_at") or rel.get("created_at") or "",
+            "is_latest": v == _local_version, "source": "release", "url": rel.get("html_url", ""),
+        })
+    if not any(r["is_latest"] for r in out):
+        out.append({"id": "local", "version": _local_version, "filename": "", "notes": "Instalada en este equipo",
+                    "channel": "stable", "file_size": 0, "created_at": "", "is_latest": True,
+                    "source": "release", "url": ""})
+    out.sort(key=lambda r: _version_tuple(r["version"]), reverse=True)
+    return out
+
+
 @api_router.get("/updates/history")
 async def get_update_history_local():
     """Historial de versiones (local + tags de GitHub). Respuesta INMEDIATA:
     los registros locales se devuelven al instante y los tags de GitHub se
     cachean (5 min) y se refrescan en segundo plano, sin bloquear nunca."""
+    if _is_managed_install():
+        return await _managed_history()
     # 1) Registros locales
     cursor = db.app_updates.find({}, sort=[("created_at", -1)])
     docs = await cursor.to_list(200)
@@ -4055,6 +4089,9 @@ async def get_github_config():
         "is_configured": True,
         "is_desktop": True,
         "suggested_repo": DEFAULT_GITHUB_REPO,
+        # instalacion con licencia: se actualiza desde el repo publico de releases
+        "managed": _is_managed_install(),
+        "local_version": _local_version,
     }
 
 
@@ -5223,6 +5260,21 @@ async def _reminder_loop():
             _reminder_state["error"] = str(e)[:300]
             logger.warning(f"Recordatorios: {e}")
         await asyncio.sleep(30)
+
+
+@api_router.post("/system/flush")
+async def system_flush():
+    """Lo llama la app justo antes de cerrarse: deja todo guardado en disco antes de
+    detener el servidor (así no se pierde un cambio hecho en el último instante)."""
+    if _using_embedded:
+        await _save_embedded_data()
+        async with _save_lock:          # espera a que termine el guardado en curso
+            pass
+        if _save_pending:
+            await _save_embedded_data()
+            async with _save_lock:
+                pass
+    return {"ok": True}
 
 
 @api_router.get("/notifications/desktop/status")

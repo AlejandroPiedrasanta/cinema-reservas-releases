@@ -84,7 +84,7 @@ const T = {
       upcoming: "Próximos Eventos", confirmed: "Confirmados", pending: "Pago Pendiente", total: "Total Reservas",
       upcomingSub: "Reservas activas", confirmedSub: "Con anticipo", pendingSub: "Saldo total", totalSub: "Historial",
       realIncome: "Ingreso Real", realIncomeSub: "Total menos costo equipo",
-      upcomingTitle: "Próximas Reservas", viewAll: "Ver todas",
+      upcomingTitle: "Reservas del mes", viewAll: "Ver todas",
       noUpcoming: "No hay reservas próximas", createFirst: "Crea tu primera reserva",
     },
     list: {
@@ -163,7 +163,7 @@ const T = {
       upcoming: "Upcoming Events", confirmed: "Confirmed", pending: "Pending Payment", total: "Total Reservations",
       upcomingSub: "Active reservations", confirmedSub: "With deposit", pendingSub: "Remaining balance", totalSub: "History",
       realIncome: "Real Income", realIncomeSub: "Total minus team cost",
-      upcomingTitle: "Upcoming Reservations", viewAll: "View all",
+      upcomingTitle: "This month's reservations", viewAll: "View all",
       noUpcoming: "No upcoming reservations", createFirst: "Create your first reservation",
     },
     list: {

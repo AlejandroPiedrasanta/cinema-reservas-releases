@@ -6,6 +6,49 @@ const BASE = `${window.__API_BASE_URL__ || process.env.REACT_APP_BACKEND_URL}/ap
 // caído en la app de escritorio) el frontend no se quede colgado en spinners.
 export const api = axios.create({ baseURL: BASE, timeout: 30000 });
 
+// ── Caché corta de lecturas (rapidez al cambiar de página) ────────────────────
+// Las listas principales (reservas, socios, metas…) se guardan 30 s en memoria:
+// al volver a una página se muestran al instante en vez de esperar al servidor.
+// Cualquier cambio (POST/PUT/PATCH/DELETE) borra la caché, así nunca se ve un dato
+// viejo después de guardar. Peticiones iguales al mismo tiempo se unen en una.
+const CACHE_TTL_MS = 30000;
+const CACHEABLE = /^\/(stats|reservations(\/[\w-]+)?|socios(\/[\w-]+)?|calendar|catalog|financials|metas(\/progress)?|settings|settings\/appearance|themes)(\?.*)?$/;
+const _cache = new Map();      // url -> { t, response }
+const _inflight = new Map();   // url -> Promise<response>
+export const clearApiCache = () => { _cache.clear(); _inflight.clear(); };
+const _baseAdapter = axios.getAdapter(api.defaults.adapter);
+api.defaults.adapter = (config) => {
+  const method = (config.method || "get").toLowerCase();
+  const url = (config.url || "").replace(/^https?:\/\/[^/]+\/api/, "");
+  if (method !== "get") {
+    return _baseAdapter(config).then((res) => { clearApiCache(); return res; });
+  }
+  const key = url + (config.params ? "?" + new URLSearchParams(config.params).toString() : "");
+  if (!CACHEABLE.test(url) || config.noCache) return _baseAdapter(config);
+  const hit = _cache.get(key);
+  if (hit && Date.now() - hit.t < CACHE_TTL_MS) {
+    return Promise.resolve({ ...hit.response, config, request: hit.response.request });
+  }
+  if (_inflight.has(key)) return _inflight.get(key).then((r) => ({ ...r, config }));
+  const p = _baseAdapter(config).then((res) => {
+    if (res.status >= 200 && res.status < 300) _cache.set(key, { t: Date.now(), response: res });
+    return res;
+  }).finally(() => _inflight.delete(key));
+  _inflight.set(key, p);
+  return p;
+};
+// Los cambios hechos con fetch() directo (restaurar, importar, borrar todo…) también
+// invalidan la caché.
+if (typeof window !== "undefined" && window.fetch && !window.__cpFetchPatched) {
+  window.__cpFetchPatched = true;
+  const _fetch = window.fetch.bind(window);
+  window.fetch = (input, init) => {
+    const m = ((init && init.method) || (input && input.method) || "GET").toUpperCase();
+    if (m !== "GET" && m !== "HEAD") clearApiCache();
+    return _fetch(input, init).then((r) => { if (m !== "GET" && m !== "HEAD") clearApiCache(); return r; });
+  };
+}
+
 // Interceptor de respuestas: reporta automáticamente los fallos de backend
 // (errores 5xx y errores de red) para que no pasen desapercibidos. Se evita
 // reportar el propio endpoint de reporte para no entrar en bucle.

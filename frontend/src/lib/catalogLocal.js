@@ -100,7 +100,19 @@ function detectKind(file) {
 // API pública
 // ─────────────────────────────────────────────────────────────
 
+// Rapidez: la lista armada se guarda en memoria; al volver a Catálogo se muestra al
+// instante. Cualquier cambio (crear/editar/borrar servicio, media o guion) la invalida.
+let _servicesCache = null;
+let _cacheVer = 0;
 export async function listServices() {
+  if (_servicesCache) return _servicesCache.map((s) => ({ ...s, media: s.media.slice(), scripts: s.scripts.slice() }));
+  const ver = _cacheVer;
+  const out = await _listServicesFromDB();
+  if (ver === _cacheVer) _servicesCache = out;   // no guardar si hubo un cambio a la mitad
+  return out.map((s) => ({ ...s, media: s.media.slice(), scripts: s.scripts.slice() }));
+}
+
+async function _listServicesFromDB() {
   const svcStore = await tx(STORE_SERVICES);
   const services = await reqPromise(svcStore.getAll());
   services.sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -143,7 +155,7 @@ export async function listServices() {
   });
 }
 
-export async function createService({ name, icon, gradient }) {
+async function _createService({ name, icon, gradient }) {
   const svcStore = await tx(STORE_SERVICES);
   const all = await reqPromise(svcStore.getAll());
   const doc = {
@@ -160,7 +172,7 @@ export async function createService({ name, icon, gradient }) {
   return { ...doc, media: [] };
 }
 
-export async function updateService(id, patch) {
+async function _updateService(id, patch) {
   const store = await tx(STORE_SERVICES, "readwrite");
   const cur = await reqPromise(store.get(id));
   if (!cur) return null;
@@ -169,7 +181,7 @@ export async function updateService(id, patch) {
   return next;
 }
 
-export async function deleteService(id) {
+async function _deleteService(id) {
   // borrar media asociada
   const mediaStore = await tx(STORE_MEDIA, "readwrite");
   const idx = mediaStore.index("service_id");
@@ -183,7 +195,7 @@ export async function deleteService(id) {
   return true;
 }
 
-export async function addMedia(service_id, file, onProgress) {
+async function _addMedia(service_id, file, onProgress) {
   const kind = detectKind(file);
   if (!kind) throw new Error("Tipo no soportado");
   // simular progreso rápido (lectura local casi instantánea)
@@ -224,7 +236,7 @@ export async function addMedia(service_id, file, onProgress) {
   };
 }
 
-export async function deleteMedia(media_id) {
+async function _deleteMedia(media_id) {
   _revoke(media_id);
   const store = await tx(STORE_MEDIA, "readwrite");
   await reqPromise(store.delete(media_id));
@@ -276,7 +288,7 @@ export async function downloadMedia(media_id, filename) {
 }
 
 // Gestión de guiones (scripts)
-export async function addScript(service_id, { title, text } = {}) {
+async function _addScript(service_id, { title, text } = {}) {
   const store = await tx(STORE_SERVICES, "readwrite");
   const svc = await reqPromise(store.get(service_id));
   if (!svc) return null;
@@ -287,7 +299,7 @@ export async function addScript(service_id, { title, text } = {}) {
   return script;
 }
 
-export async function updateScript(service_id, script_id, patch) {
+async function _updateScript(service_id, script_id, patch) {
   const store = await tx(STORE_SERVICES, "readwrite");
   const svc = await reqPromise(store.get(service_id));
   if (!svc) return null;
@@ -296,7 +308,7 @@ export async function updateScript(service_id, script_id, patch) {
   return scripts.find((s) => s.id === script_id) || null;
 }
 
-export async function deleteScript(service_id, script_id) {
+async function _deleteScript(service_id, script_id) {
   const store = await tx(STORE_SERVICES, "readwrite");
   const svc = await reqPromise(store.get(service_id));
   if (!svc) return null;
@@ -340,3 +352,18 @@ export function saveScriptTemplates(list) {
 }
 
 export function newTemplateId() { return uuid(); }
+
+// Cambios: invalidan la lista en memoria antes y después de escribir (así una lectura
+// que ocurra a la mitad no deja guardada una versión vieja).
+async function _mutating(fn, args) {
+  _servicesCache = null; _cacheVer++;
+  try { return await fn(...args); } finally { _servicesCache = null; _cacheVer++; }
+}
+export const createService = (...a) => _mutating(_createService, a);
+export const updateService = (...a) => _mutating(_updateService, a);
+export const deleteService = (...a) => _mutating(_deleteService, a);
+export const addMedia = (...a) => _mutating(_addMedia, a);
+export const deleteMedia = (...a) => _mutating(_deleteMedia, a);
+export const addScript = (...a) => _mutating(_addScript, a);
+export const updateScript = (...a) => _mutating(_updateScript, a);
+export const deleteScript = (...a) => _mutating(_deleteScript, a);

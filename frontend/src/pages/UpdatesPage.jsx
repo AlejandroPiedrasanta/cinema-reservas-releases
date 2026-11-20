@@ -302,6 +302,9 @@ export default function UpdatesPage() {
   };
 
   const latest = history.find(h => h.is_latest);
+  // App instalada con licencia: se actualiza sola desde las versiones publicadas
+  const managed = !!ghConfig?.managed;
+  const newestPublished = managed ? history.find(h => h.created_at) : latest;
 
   return (
     <div className="px-6 py-8 max-w-7xl mx-auto">
@@ -320,7 +323,7 @@ export default function UpdatesPage() {
           </h1>
         </div>
         <p className="text-sm text-slate-500 font-medium mt-1.5">
-          Publica nuevas versiones de tu App de Escritorio
+          {managed ? "Mantén Cinema Reservas al día · tus reservas y datos se conservan al actualizar" : "Publica nuevas versiones de tu App de Escritorio"}
         </p>
       </motion.div>
 
@@ -328,9 +331,9 @@ export default function UpdatesPage() {
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
         className="grid grid-cols-3 gap-4 mb-6">
         {[
-          { label: "Versión activa", value: latest ? `v${latest.version}` : "—", icon: Star, color: "bg-emerald-100 text-emerald-600" },
-          { label: "Total versiones", value: history.length, icon: Package, color: "bg-indigo-100 text-indigo-600" },
-          { label: "Última subida", value: latest ? formatDate(latest.created_at) : "—", icon: Clock, color: "bg-amber-100 text-amber-600" },
+          { label: managed ? "Versión instalada" : "Versión activa", value: managed && ghConfig?.local_version ? `v${ghConfig.local_version}` : latest ? `v${latest.version}` : "—", icon: Star, color: "bg-emerald-100 text-emerald-600" },
+          { label: managed ? "Versiones publicadas" : "Total versiones", value: history.filter(h => !managed || h.created_at).length, icon: Package, color: "bg-indigo-100 text-indigo-600" },
+          { label: managed ? `Última versión${newestPublished ? ` (v${newestPublished.version})` : ""}` : "Última subida", value: newestPublished?.created_at ? formatDate(newestPublished.created_at) : "—", icon: Clock, color: "bg-amber-100 text-amber-600" },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="glass rounded-3xl p-5 flex items-center gap-4">
             <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 ${color}`}>
@@ -356,7 +359,7 @@ export default function UpdatesPage() {
               <p className="text-sm font-black text-slate-800" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
                 Buscar actualización
               </p>
-              <p className="text-xs text-slate-400">Consulta tu repositorio de GitHub en busca de una versión nueva</p>
+              <p className="text-xs text-slate-400">{managed ? "Comprueba si hay una versión nueva de Cinema Reservas; se instala sola en un minuto" : "Consulta tu repositorio de GitHub en busca de una versión nueva"}</p>
             </div>
           </div>
           <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
@@ -572,7 +575,7 @@ export default function UpdatesPage() {
                   <span className="text-base font-black text-slate-900" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>v{v.version}</span>
                   {v.is_latest && (
                     <span className="flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
-                      <CheckCircle2 size={9} /> ACTIVA
+                      <CheckCircle2 size={9} /> {managed ? "INSTALADA" : "ACTIVA"}
                     </span>
                   )}
                 </div>
@@ -597,6 +600,16 @@ export default function UpdatesPage() {
                 )}
 
                 {/* Actions */}
+                {v.source === "release" ? (
+                  <div className="flex items-center gap-1 flex-shrink-0 w-9 justify-end">
+                    {v.url && (
+                      <a href={v.url} target="_blank" rel="noreferrer" data-testid={`notes-btn-${v.id}`}
+                        className="p-2 rounded-xl hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 transition-colors" title="Ver novedades de esta versión">
+                        <ExternalLink size={14} />
+                      </a>
+                    )}
+                  </div>
+                ) : (
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <a href={getUpdateDownloadUrl(v.id)} target="_blank" rel="noreferrer" data-testid={`download-btn-${v.id}`}>
                     <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
@@ -617,6 +630,7 @@ export default function UpdatesPage() {
                     <Trash2 size={14} />
                   </motion.button>
                 </div>
+                )}
               </motion.div>
             ))}
           </div>

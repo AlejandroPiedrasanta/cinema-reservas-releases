@@ -17,6 +17,41 @@ import webbrowser
 import winreg
 from pathlib import Path
 
+NO_WINDOW = 0x08000000
+HOME = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+_prespawned = {"proc": None}
+
+
+def _spawn_server():
+    app_dir, py = HOME / "app", HOME / "python" / "pythonw.exe"
+    if not py.exists() or not (app_dir / "app.py").exists():
+        return None
+    log = open(app_dir / "server_log.txt", "w", encoding="utf-8", errors="ignore")
+    return subprocess.Popen([str(py), "app.py"], cwd=str(app_dir), stdout=log, stderr=subprocess.STDOUT,
+                            creationflags=NO_WINDOW, env={**os.environ, "CP_NO_BROWSER": "1", "CP_MANAGED_INSTALL": "1"})
+
+
+def _early_prespawn() -> None:
+    """Rapidez: con licencia valida, el servidor arranca en cuanto se abre el programa,
+    antes incluso de cargar Qt y la ventana (asi ambas cosas ocurren a la vez)."""
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("--stop", "--uninstall"):
+        return
+    try:
+        with socket.create_connection(("127.0.0.1", 8001), timeout=0.15):
+            return                                    # ya esta corriendo
+    except OSError:
+        pass
+    try:
+        import license_core
+        if not license_core.check_local().valid:
+            return
+        _prespawned["proc"] = _spawn_server()
+    except Exception:
+        _prespawned["proc"] = None
+
+
+_early_prespawn()
+
 from PySide6.QtCore import QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
@@ -25,8 +60,6 @@ import license_core as lic
 from license_ui import ask_license
 from ui_common import APP_TITLE, PORT, Frameless, GradientButton, font, paint_bokeh
 
-NO_WINDOW = 0x08000000
-HOME = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\CinemaReservas"
 TEAL, BRONZE = "#14808a", "#a97a4c"
 
@@ -64,7 +97,28 @@ def ps_quote(p) -> str:
     return "'" + str(p).replace("'", "''") + "'"
 
 
+def _flush_server() -> None:
+    """Pide al servidor que guarde todo en disco antes de detenerlo (max. ~3 s)."""
+    if not port_open(0.2):
+        return
+    try:
+        import ssl
+        import urllib.request
+        ctx = ssl._create_unverified_context()      # certificado local autofirmado
+        for scheme in ("https", "http"):
+            try:
+                req = urllib.request.Request("%s://127.0.0.1:%d/api/system/flush" % (scheme, PORT),
+                                             data=b"", method="POST")
+                urllib.request.urlopen(req, timeout=3, context=ctx if scheme == "https" else None).read()
+                return
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
 def stop_server() -> None:
+    _flush_server()
     ps = ("$h=%s;Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($h, "
           "[StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue"
           % ps_quote(str(HOME / "python") + "\\"))
@@ -148,21 +202,31 @@ class Splash(Frameless):
         self.update()
 
 
+def prespawn_server() -> None:
+    """Rapidez: arranca el servidor YA, mientras se dibuja la pantalla de carga (antes se
+    esperaba a que la pantalla terminara de cargar: ~1 s perdido en cada apertura)."""
+    if _prespawned["proc"] is None and not port_open(0.15):
+        try:
+            _prespawned["proc"] = _spawn_server()
+        except Exception:
+            _prespawned["proc"] = None
+
+
 def start_server(ui) -> None:
     app_dir, py = HOME / "app", HOME / "python" / "pythonw.exe"
     if not py.exists() or not (app_dir / "app.py").exists():
         ui.failed("Instalacion incompleta", "Vuelve a ejecutar el instalador de Cinema Reservas.")
         return
     ui.status(55, "Iniciando servidor…", "app.py")
-    log = open(app_dir / "server_log.txt", "w", encoding="utf-8", errors="ignore")
-    proc = subprocess.Popen([str(py), "app.py"], cwd=str(app_dir), stdout=log, stderr=subprocess.STDOUT,
-                            creationflags=NO_WINDOW, env={**os.environ, "CP_NO_BROWSER": "1", "CP_MANAGED_INSTALL": "1"})
-    for i in range(110):
-        if port_open():
+    proc = _prespawned["proc"]
+    _prespawned["proc"] = None                    # "Reintentar" vuelve a lanzarlo de cero
+    if proc is None or (proc.poll() is not None and not port_open()):
+        proc = _spawn_server()
+    for i in range(330):                          # hasta ~35 s, mirando cada 0.1 s
+        if port_open(0.25):
             url = base_url()
             opener = getattr(ui, "open", None)       # interfaz web: ventana propia de Windows
             ui.status(100, "Abriendo Cinema Reservas…" if opener else "Abriendo en tu navegador…", url)
-            time.sleep(0.2)
             (opener or webbrowser.open)(url)
             ui.status(100, "Cinema Reservas esta corriendo", "Puedes cerrar esta ventana")
             ui.done()
@@ -178,8 +242,8 @@ def start_server(ui) -> None:
             else:
                 ui.failed("El servidor se cerro al iniciar", tail or "Revisa app\\server_log.txt")
             return
-        ui.status(55 + i * 0.4, None, "esperando servidor (%ds)" % (i // 3 + 1))
-        time.sleep(0.33)
+        ui.status(min(98, 55 + i * 0.15), None, "esperando servidor (%ds)" % (i // 10 + 1))
+        time.sleep(0.1)
     ui.failed("El servidor no respondio", "Revisa app\\server_log.txt (¿puerto %d ocupado?)" % PORT)
 
 
@@ -280,9 +344,15 @@ def uninstall(app: QApplication) -> int:
 
 # ── interfaz web (WebView2): flujo comun con macOS en web_launcher.py ──
 def run_web(view: str, reason: str = "") -> int:
+    if view == "splash":
+        prespawn_server()
     import web_launcher
-    return web_launcher.run(view, reason, version=version, start_server=start_server,
-                            stop_server=stop_server, do_uninstall=do_uninstall)
+    rc = web_launcher.run(view, reason, version=version, start_server=start_server,
+                          stop_server=stop_server, do_uninstall=do_uninstall)
+    if _prespawned["proc"] is not None:          # se cerro antes de usarlo: no dejarlo solo
+        _prespawned["proc"] = None
+        stop_server()
+    return rc
 
 
 def main() -> int:

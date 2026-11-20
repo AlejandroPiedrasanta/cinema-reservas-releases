@@ -227,7 +227,7 @@ export default function CalendarView() {
             />
 
             <div className="relative glass rounded-[28px] border-white/60 shadow-lg group-hover:shadow-2xl transition-shadow duration-500 px-6 py-5 sm:px-8 sm:py-6">
-              <div className="flex flex-col md:flex-row items-start md:items-center gap-5 md:gap-8">
+              <div className="flex flex-col xl:flex-row items-start xl:items-center gap-5 xl:gap-8">
                 {/* Icono + Estado */}
                 <div className="flex items-center gap-4 flex-shrink-0">
                   <motion.div
@@ -272,7 +272,7 @@ export default function CalendarView() {
                 </div>
 
                 {/* Contador de días */}
-                <div className="flex items-center gap-4 md:ml-auto">
+                <div className="flex flex-wrap items-center gap-4 xl:ml-auto">
                   <div className="flex flex-col items-center px-5 py-3 rounded-2xl bg-white/70 border border-white/80 shadow-sm">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                       {es ? "Fecha" : "Date"}

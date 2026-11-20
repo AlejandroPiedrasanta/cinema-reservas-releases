@@ -144,7 +144,7 @@ def _load_geom() -> dict:
         scr = webview.screens or []
         inside = any(s.x - 50 <= g["x"] < s.x + s.width - 100 and s.y - 50 <= g["y"] < s.y + s.height - 100
                      for s in scr)
-        if inside and g["width"] >= 1024 and g["height"] >= 680:
+        if inside and g["width"] >= 820 and g["height"] >= 560:
             return g
     except Exception:
         pass
@@ -159,7 +159,7 @@ class _WinChrome:
       - redimensionar = arrastrar los bordes (la pagina avisa del borde; aqui se sigue el raton)
     Los metodos publicos los llama la pagina con window.pywebview.api.<nombre>()."""
 
-    MIN_W, MIN_H = 1024, 680
+    MIN_W, MIN_H = 820, 560
 
     def __init__(self, start_max: bool, last_rect=None):
         self._w = None
@@ -346,7 +346,7 @@ def app_window(url: str, on_closed=None):
     import webview
     g = _load_geom()
     state = {"max": g.get("maximized", True)}
-    kw = dict(width=g.get("width", 1440), height=g.get("height", 900), min_size=(1024, 680),
+    kw = dict(width=g.get("width", 1440), height=g.get("height", 900), min_size=(820, 560),
               resizable=True, background_color="#0b0a10")
     chrome = None
     if IS_WIN:

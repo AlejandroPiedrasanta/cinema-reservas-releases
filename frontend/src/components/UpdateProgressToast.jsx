@@ -47,11 +47,18 @@ export default function UpdateProgressToast() {
 
   useEffect(() => {
     let cancelled = false;
+    let timer = null;
+    let lastJson = "";
+    let busy = false;
     const tick = async () => {
+      busy = false;
       try {
         const p = await getUpdateProgress();
         if (cancelled) return;
-        setProgress(p);
+        busy = !!(p?.active || p?.stage === "downloading" || p?.stage === "installing");
+        // re-render solo si algo cambió
+        const j = JSON.stringify(p || {});
+        if (j !== lastJson) { lastJson = j; setProgress(p); }
 
         // Mostrar mientras haya actividad o durante 5s tras el estado final.
         if (p?.active || p?.stage === "downloading" || p?.stage === "installing") {
@@ -73,13 +80,15 @@ export default function UpdateProgressToast() {
         }
       } catch {
         // Sin backend / sin frozen → silencioso.
+      } finally {
+        // rápido solo mientras se instala algo; en reposo, cada 10 s
+        if (!cancelled) timer = setTimeout(tick, busy ? POLL_INTERVAL_MS : 10000);
       }
     };
     tick();
-    const iv = setInterval(tick, POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
-      clearInterval(iv);
+      clearTimeout(timer);
       if (lingerTimerRef.current) clearTimeout(lingerTimerRef.current);
     };
   }, [dismissed]);

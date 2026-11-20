@@ -1,6 +1,6 @@
 import "@/App.css";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
-import { AnimatePresence, motion, MotionConfig } from "framer-motion";
+import { motion, MotionConfig } from "framer-motion";
 import { SettingsProvider, useSettings } from "@/context/SettingsContext";
 import { AuthProvider } from "@/context/AuthContext";
 import Layout from "@/components/Layout";
@@ -18,6 +18,7 @@ import UpdatesPage from "@/pages/UpdatesPage";
 import { Toaster } from "@/components/ui/toaster";
 import LockScreen from "@/components/LockScreen";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import PageErrorBoundary from "@/components/PageErrorBoundary";
 import IncidentsNotifier from "@/components/IncidentsNotifier";
 import { installGlobalErrorHandlers } from "@/lib/errorReporter";
 import { useEffect } from "react";
@@ -37,30 +38,29 @@ function AnimatedRoutes() {
   const location = useLocation();
   const { pageTransition } = useSettings();
 
+  // Rapidez: la página nueva entra AL INSTANTE (sin esperar a que salga la anterior
+  // y sin desenfoque, que es caro de pintar en páginas grandes). Solo un fundido corto.
+  const ease = [0.22, 1, 0.36, 1];
   const getVariants = () => {
     if (pageTransition === "slide") return {
-      initial: { opacity: 0, x: 24 },
-      animate: { opacity: 1, x: 0, transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] } },
-      exit: { opacity: 0, x: -12, transition: { duration: 0.18 } },
+      initial: { opacity: 0, x: 10 },
+      animate: { opacity: 1, x: 0, transition: { duration: 0.16, ease } },
     };
     if (pageTransition === "zoom") return {
-      initial: { opacity: 0, scale: 0.96 },
-      animate: { opacity: 1, scale: 1, transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] } },
-      exit: { opacity: 0, scale: 1.02, transition: { duration: 0.18 } },
+      initial: { opacity: 0, scale: 0.985 },
+      animate: { opacity: 1, scale: 1, transition: { duration: 0.16, ease } },
     };
-    if (pageTransition === "none") return {
-      initial: {}, animate: {}, exit: {},
-    };
+    if (pageTransition === "none") return { initial: {}, animate: {} };
     return {
-      initial: { opacity: 0, y: 16, filter: "blur(4px)" },
-      animate: { opacity: 1, y: 0, filter: "blur(0px)", transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } },
-      exit: { opacity: 0, y: -8, filter: "blur(4px)", transition: { duration: 0.2 } },
+      initial: { opacity: 0, y: 6 },
+      animate: { opacity: 1, y: 0, transition: { duration: 0.16, ease } },
     };
   };
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.div key={location.pathname} variants={getVariants()} initial="initial" animate="animate" exit="exit" style={{ minHeight: "100%" }}>
+    <>
+      <motion.div key={location.pathname} variants={getVariants()} initial="initial" animate="animate" style={{ minHeight: "100%" }}>
+        <PageErrorBoundary key={location.pathname}>
         <Routes location={location}>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
@@ -76,8 +76,9 @@ function AnimatedRoutes() {
           <Route path="/actualizaciones" element={<UpdatesPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
+        </PageErrorBoundary>
       </motion.div>
-    </AnimatePresence>
+    </>
   );
 }
 

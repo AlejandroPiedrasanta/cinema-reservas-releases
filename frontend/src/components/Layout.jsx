@@ -39,7 +39,16 @@ export default function Layout({ children }) {
   const { sectionLock, unlockSection, cancelSectionLock } = useAdvancedSecurity();
 
   // "island" always uses islandMargins for margins; no pill style
-  const compact = sidebarCompact;
+  // Adaptable: con la ventana estrecha (p. ej. media pantalla) el menú pasa solo a iconos
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 1179px)").matches);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 1179px)");
+    const on = () => setNarrow(mq.matches);
+    mq.addEventListener ? mq.addEventListener("change", on) : mq.addListener(on);
+    return () => (mq.removeEventListener ? mq.removeEventListener("change", on) : mq.removeListener(on));
+  }, []);
+  const compact = sidebarCompact || narrow;
 
   // Icon size mapping
   const iconPx = iconSize === "small" ? 14 : iconSize === "large" ? 22 : 18;
@@ -176,7 +185,8 @@ export default function Layout({ children }) {
           </div>
         )}
 
-        <nav className={`relative z-10 flex-1 py-5 space-y-1.5 transition-all duration-300 ${compact ? "px-2" : "px-3"}`}>
+        <nav className={`relative z-10 flex-1 min-h-0 overflow-y-auto overflow-x-hidden py-5 space-y-1.5 transition-all duration-300 ${compact ? "px-2" : "px-3"}`}
+          style={{ scrollbarWidth: "none" }}>
           {navItems.map(({ path, label, icon: Icon, tile }, idx) => (
             <motion.div
               key={path}
@@ -312,8 +322,8 @@ export default function Layout({ children }) {
       </AnimatePresence>
 
       <main
-        className="flex-1 min-h-screen transition-all duration-300"
-        style={{ marginLeft: mainMarginLeft, position: "relative", zIndex: 10 }}
+        className="flex-1 min-w-0 min-h-screen transition-[margin] duration-300 md:ml-[var(--cp-main-ml)]"
+        style={{ "--cp-main-ml": mainMarginLeft, position: "relative", zIndex: 10 }}
       >
         <div className="pt-16 md:pt-0 min-h-screen">{children}</div>
       </main>

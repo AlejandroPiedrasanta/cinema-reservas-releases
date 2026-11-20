@@ -87,7 +87,13 @@ jobs:
           CP_MANAGED_INSTALL=1 CP_DEV_NO_LICENSE=1 CP_NO_BROWSER=1 CP_TEST_LOCAL_VERSION=1.0.0 \
             "$EXE" --server > "$RUNNER_TEMP/srv_upd.log" 2>&1 &
           for i in $(seq 1 90); do curl -sk --max-time 3 https://localhost:8001/api/ | grep -q "Cinema" && break; sleep 1; done
-          CHK=$(curl -sk "https://localhost:8001/api/updates/check?refresh=true"); echo "$CHK"
+          # el .dmg recien subido puede tardar unos segundos/minutos en descargarse: reintentar
+          for i in $(seq 1 12); do
+            CHK=$(curl -sk "https://localhost:8001/api/updates/check?refresh=true")
+            echo "$CHK" | grep -q '"has_update":true' && break
+            echo "intento $i: aun no aparece, espero 20 s"; sleep 20
+          done
+          echo "$CHK"
           echo "$CHK" | grep -q '"has_update":true' || { echo "FALLO: no detecto la actualizacion"; tail -20 "$RUNNER_TEMP/srv_upd.log"; exit 1; }
           APPLY=$(curl -sk --max-time 600 -X POST -H "Content-Type: application/json" -H "Origin: https://localhost:8001" \
                   -d '{}' https://localhost:8001/api/updates/apply-and-restart); echo "$APPLY"

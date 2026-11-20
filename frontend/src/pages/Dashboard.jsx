@@ -1,3 +1,4 @@
+import { localDate } from "@/lib/apiMsg";
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { getStats, getReservations, getSocios } from "@/lib/api";
@@ -187,7 +188,9 @@ export default function Dashboard() {
           return d.getMonth() === cm && d.getFullYear() === cy;
         })
         .sort((a, b) => new Date(a.event_date) - new Date(b.event_date));
-      setRecent(monthEvents);
+      // primero los que vienen; los que ya pasaron este mes, al final
+      const today = localDate();
+      setRecent([...monthEvents.filter(e => e.event_date >= today), ...monthEvents.filter(e => e.event_date < today)]);
     } catch (e) { console.error(e); } finally { if (!silent) setLoading(false); }
   };
 
