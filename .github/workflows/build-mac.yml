@@ -59,6 +59,20 @@ jobs:
         run: |
           chmod +x build_mac.sh
           ./build_mac.sh
+      - name: Prueba completa de la app (ventanas reales, con capturas)
+        run: |
+          APP="constructor_instalador_mac/dist/Cinema Reservas.app/Contents/MacOS/CinemaReservas"
+          "$APP" --uitest "$RUNNER_TEMP/uitest" 2>&1 | tee "$RUNNER_TEMP/uitest.log"
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Guardar capturas de la prueba
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prueba-mac-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/uitest
+            ${{ runner.temp }}/uitest.log
+          retention-days: 14
       - name: Adjuntar al release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -8,6 +8,7 @@ Un solo ejecutable con cuatro modos:
   CinemaReservas --server    corre el servidor (app.py) dentro de este mismo ejecutable
   CinemaReservas --stop      cierra el servidor local
   CinemaReservas --selftest  comprueba que la interfaz web va incluida (lo usa build_mac.sh)
+  CinemaReservas --uitest D  prueba completa con ventanas y capturas en D (workflow de GitHub)
 
 Los datos del cliente viven FUERA del .app, en
   ~/Library/Application Support/CinemaProductions/app
@@ -166,6 +167,108 @@ def selftest() -> int:
     return 0 if ok else 1
 
 
+def uitest(out_dir: str) -> int:
+    """Prueba de punta a punta en un Mac (la usa el workflow de GitHub, que corre en Macs
+    reales): pantalla de licencia -> licencia de prueba -> arranque -> ventana de la app ->
+    cerrar -> servidor detenido. Guarda capturas y resultado.json en out_dir."""
+    import json as _json
+    from types import SimpleNamespace
+    sys.path.insert(0, str(BUNDLE))
+    import license_core as lic
+    import web_launcher
+    import webui
+    import webview
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    res = {"pasos": []}
+
+    def paso(nombre, ok, detalle=""):
+        res["pasos"].append({"paso": nombre, "ok": bool(ok), "detalle": str(detalle)[:300]})
+        print(("OK   " if ok else "FALLO"), nombre, detalle, flush=True)
+
+    def captura(nombre):
+        try:
+            subprocess.run(["screencapture", "-x", str(out / nombre)], check=False, timeout=20)
+        except Exception as e:
+            print("captura no disponible:", e)
+
+    lic.deactivate_local()
+    stop_server()
+
+    def drive(api):
+        try:
+            w = api._win.w
+            time.sleep(6)
+            h1 = w.evaluate_js("document.querySelector('h1') && document.querySelector('h1').textContent")
+            paso("pantalla de licencia", h1 == "Activa tu licencia", h1)
+            paso("botones estilo Mac", w.evaluate_js("document.documentElement.classList.contains('is-mac')"))
+            paso("estilos cargados", w.evaluate_js(
+                "getComputedStyle(document.querySelector('#lic-go')).borderRadius !== '0px'"))
+            w.evaluate_js("document.querySelector('#lic-key').value='otra-clave-mala'; document.querySelector('#lic-go').click()")
+            time.sleep(4)
+            paso("clave invalida rechazada",
+                 w.evaluate_js("document.querySelector('#lic-msg').className.indexOf('alert-error') >= 0"),
+                 w.evaluate_js("document.querySelector('#lic-msg').textContent"))
+            captura("1-licencia.png")
+            # licencia de prueba firmada localmente (equivale a una activacion correcta)
+            now = int(time.time())
+            lic._save({"key": "CI-TEST-0000-0000-0000", "machine": lic.machine_id(), "email": "ci@test",
+                       "activated_at": now, "last_check": now, "revoked": False})
+            paso("licencia de prueba valida", lic.check_local().valid)
+            w.evaluate_js("show('splash', S)")
+            app_w = None
+            for _ in range(120):
+                time.sleep(1)
+                otras = [x for x in webview.windows if x is not w]
+                if otras:
+                    app_w = otras[0]
+                    break
+                if w.evaluate_js("(document.querySelector('#sp-retry')||{hidden:true}).hidden === false"):
+                    break
+            paso("servidor arranco y abrio la ventana de la app", app_w is not None,
+                 w.evaluate_js("(document.querySelector('#sp-title')||{}).textContent") if app_w is None else "")
+            if app_w is None:
+                captura("2-error-arranque.png")
+                try:
+                    paso("log del servidor", False, (APP_DIR / "server_log.txt").read_text(errors="ignore")[-300:])
+                except Exception:
+                    pass
+            else:
+                time.sleep(10)
+                titulo = app_w.evaluate_js("document.title") or ""
+                paso("la app carga (certificado local aceptado)", "Cinema" in titulo, titulo)
+                paso("la app tiene contenido", (app_w.evaluate_js("document.body.innerText.length") or 0) > 50)
+                captura("2-app.png")
+                res["app_abierta"] = True
+                app_w.destroy()          # ultima ventana: termina el bucle y sigue abajo
+        except Exception as e:
+            paso("excepcion en la prueba", False, repr(e))
+        finally:
+            for x in list(webview.windows):
+                try:
+                    x.destroy()
+                except Exception:
+                    pass
+
+    api = web_launcher.LauncherApi("license", "", SimpleNamespace(
+        version=version, start_server=start_server, stop_server=stop_server))
+    api._win = webui.Window(api, "license", *web_launcher.SIZES["license"])
+    threading.Thread(target=drive, args=(api,), daemon=True).start()
+    webui.start()
+    if res.get("app_abierta"):
+        for _ in range(10):              # el cierre de la ventana ya detuvo el servidor
+            if not port_open():
+                break
+            time.sleep(0.5)
+        paso("al cerrar la ventana se detiene el servidor", not port_open())
+    stop_server()
+    lic.deactivate_local()
+    res["ok"] = all(p["ok"] for p in res["pasos"]) and len(res["pasos"]) >= 8
+    (out / "resultado.json").write_text(_json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
+    print("RESULTADO:", "OK" if res["ok"] else "FALLO", flush=True)
+    return 0 if res["ok"] else 1
+
+
 # ── GUI Qt (respaldo) ────────────────────────────────────────────────
 def gui() -> int:
     sys.path.insert(0, str(BUNDLE))
@@ -292,6 +395,8 @@ def main() -> int:
         return 0
     if arg == "--selftest":
         return selftest()
+    if arg == "--uitest":
+        return uitest(sys.argv[2] if len(sys.argv) > 2 else "/tmp/cr_uitest")
     try:
         r = web_gui()
         if r is not None:
