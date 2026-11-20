@@ -5,8 +5,21 @@
 # Uso:  pwsh -File servidor_dev.ps1
 $ErrorActionPreference = "Stop"
 $app = Resolve-Path "$PSScriptRoot\..\app_servidor"
-$py = Join-Path $env:LOCALAPPDATA "CinemaProductions\python\python.exe"   # Python con todo instalado
-if (-not (Test-Path $py)) { $py = "py" }
+# Python propio del modo desarrollo (copia del de la app instalada, con todas las librerias).
+# Antes se usaba directamente el instalado y, al reinstalar la app, el instalador cerraba
+# este servidor (cierra todo lo que corre desde su carpeta).
+$devPy = Join-Path $PSScriptRoot "_python"
+$py = Join-Path $devPy "python.exe"
+if (-not (Test-Path $py)) {
+    $src = Join-Path $env:LOCALAPPDATA "CinemaProductions\python"
+    if (-not (Test-Path "$src\python.exe")) { $src = Resolve-Path "$PSScriptRoot\..\constructor_instalador\_build\rt" -EA SilentlyContinue }
+    if (-not $src -or -not (Test-Path "$src\python.exe")) { throw "Instala Cinema Reservas o ejecuta build.ps1 una vez (hace falta su Python)." }
+    Write-Host "Preparando el Python de desarrollo (una sola vez)..."
+    robocopy $src $devPy /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    # el ._pth del Python embebido apunta a ..\app: aqui la app es ..\app_servidor
+    $pth = Get-ChildItem $devPy -Filter "python*._pth" | Select-Object -First 1
+    if ($pth) { (Get-Content $pth.FullName) -replace '^\.\.\\app$', '..\..\app_servidor' | Set-Content $pth.FullName -Encoding ASCII }
+}
 $env:CP_DEV_NO_LICENSE = "1"
 $env:CP_NO_BROWSER = "1"
 $env:MONGO_URL = "embedded"
