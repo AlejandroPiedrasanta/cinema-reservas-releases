@@ -270,7 +270,7 @@ function GoalReachedModal({ open, onClose, type, monthLabel, amount, formatCurre
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}
                 className="text-emerald-100/90 text-sm font-bold uppercase tracking-widest mb-4"
               >
-                Meta de {monthLabel} · {typeCfg.label}
+                {/^año /.test(monthLabel || "") ? `Meta del ${monthLabel}` : /^\d+ meses$/.test(monthLabel || "") ? `Metas de ${monthLabel}` : `Meta de ${monthLabel}`} · {typeCfg.label}
               </motion.p>
               <motion.div
                 initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.4, type: "spring", damping: 10 }}
@@ -418,7 +418,7 @@ function MonthCard({ month, data, type, index, formatCurrency, onSave, celebrate
                 {isPast ? "mes cerrado" : isCurrent ? "en curso" : "próximo"}
               </p>
             ) : (
-              <p className="text-[10px] text-slate-400 font-medium">{Math.round(animPct)}% completado</p>
+              <p className="text-[10px] text-slate-400 font-medium whitespace-nowrap tabular-nums">{Math.round(animPct)}% completado</p>
             )}
           </div>
         </div>
@@ -1454,7 +1454,8 @@ export default function Metas() {
   const celebratedRef      = useRef(new Set()); // meses ya celebrados en esta sesión
   const milestonesShownRef = useRef(new Set()); // hitos anuales mostrados
   const streakBadgeRef     = useRef(new Set()); // badges de racha mostrados
-  const { formatCurrency } = useSettings();
+  const { formatCurrency, language } = useSettings();
+  const es = language !== "en";
   const { toast } = useToast();
 
   const load = useCallback(async ({ silent = false } = {}) => {
@@ -1479,7 +1480,9 @@ export default function Metas() {
       if (badge) streakBadgeRef.current.add(`${type}-${year}-badge-${badge.min}`);
 
       setData(p);
-      setAnnualDraft(String(p.annual_goal_explicit || ""));
+      // el servidor manda la meta anual como annual_goal (antes se leía un campo que no
+      // llegaba y el editor se abría vacío: guardar sin escribir BORRABA la meta)
+      setAnnualDraft(String(p.annual_goal_explicit || p.annual_goal || ""));
     } catch (e) {
       console.error(e);
       toast({ title: "Error al cargar metas", variant: "destructive" });
@@ -1519,7 +1522,7 @@ export default function Metas() {
       celebratedRef.current.add(annualKey);
       markCelebrated(annualKey);
       celebrateGoalReached();
-      setModal({ monthLabel: `Meta Anual ${year}`, amount: data.annual_actual });
+      setModal({ monthLabel: `año ${year}`, amount: data.annual_actual });
     }
     // Streak badges — celebra al desbloquear un nuevo badge de racha
     const streak = computeStreaks(data.months);
@@ -1546,9 +1549,14 @@ export default function Metas() {
   };
 
   const handleSaveAnnual = async () => {
+    const amount = parseFloat(annualDraft);
+    if (!(amount > 0)) {
+      toast({ title: "Escribe un monto mayor a 0 para la meta anual", variant: "destructive" });
+      return;
+    }
     setSavingAnnual(true);
     try {
-      await upsertMeta({ year, month: null, type, amount: parseFloat(annualDraft) || 0 });
+      await upsertMeta({ year, month: null, type, amount });
       toast({ title: `Meta anual ${year} guardada ✓` });
       setAnnualEditing(false);
       fireConfetti(typeCfg.accent === "emerald" ? "payment" : "reservation", { x: 0.5, y: 0.3 });
@@ -1557,18 +1565,31 @@ export default function Metas() {
     finally { setSavingAnnual(false); }
   };
 
+  // Varios meses alcanzados a la vez (al abrir Metas en otro equipo, o al cambiar de año
+  // o tipo) se celebran JUNTOS: una sola lluvia y una sola ventana, en vez de una por mes
+  // encimadas (eso era el salto/parpadeo de animaciones).
+  const pendingCelebrateRef = useRef([]);
+  const pendingTimerRef = useRef(null);
+  const modalOpenRef = useRef(false);
+  useEffect(() => { modalOpenRef.current = !!modal; }, [modal]);
   const handleMonthCelebrate = useCallback((month, amount) => {
     const key = `${type}-${year}-${month}`;
     if (celebratedRef.current.has(key)) return;
     if (isCelebrated(key)) { celebratedRef.current.add(key); return; }
     celebratedRef.current.add(key);
     markCelebrated(key);
-    // Delay so it doesn't fire during initial paint
-    setTimeout(() => {
+    pendingCelebrateRef.current.push({ month, amount });
+    clearTimeout(pendingTimerRef.current);
+    pendingTimerRef.current = setTimeout(() => {           // espera a que lleguen todos
+      const list = pendingCelebrateRef.current.splice(0);
+      if (!list.length) return;
       celebrateGoalReached();
-      setModal({ monthLabel: MONTHS_ES[month - 1], amount });
-    }, 250);
-  }, [type, year]);
+      if (modalOpenRef.current) return;                     // ya se ve otra (p. ej. la anual)
+      if (list.length === 1) setModal({ monthLabel: MONTHS_ES[list[0].month - 1], amount: list[0].amount });
+      else setModal({ monthLabel: `${list.length} meses`, amount: list.reduce((s, x) => s + (x.amount || 0), 0) });
+    }, 450);
+  }, [type, year]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => clearTimeout(pendingTimerRef.current), []);
 
   const reachedCount = data?.months?.filter(m => m.reached).length || 0;
   const totalActual  = data?.months?.reduce((s, m) => s + (m.actual || 0), 0) || 0;
@@ -1581,10 +1602,10 @@ export default function Metas() {
       {/* Header */}
       <PageHeader
         icon={Target}
-        title="Metas"
+        title={es ? "Metas" : "Goals"}
         subtitle={isGastos
-          ? `${typeCfg.desc} · Total del año: ${formatCurrency(totalActual)}`
-          : `${typeCfg.desc} · ${reachedCount} de 12 meses conquistados`}
+          ? (es ? `${typeCfg.desc} · Total del año: ${formatCurrency(totalActual)}` : `Year total: ${formatCurrency(totalActual)}`)
+          : (es ? `${typeCfg.desc} · ${reachedCount} de 12 meses conquistados` : `${reachedCount} of 12 months reached`)}
         gradient={
           typeCfg.key === "ventas"
             ? "linear-gradient(135deg,#10b981,#14b8a6,#0d9488)"
@@ -1749,8 +1770,11 @@ export default function Metas() {
               <p className="text-xs font-black text-slate-500 uppercase tracking-widest">Meta Anual · {year} · {typeCfg.label}</p>
             </div>
             <div className="flex items-baseline gap-3 flex-wrap">
-              <p className="text-5xl font-black text-slate-900 tracking-tight leading-none" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }} data-testid="annual-actual">
-                {formatCurrency(animAnnualVal)}
+              {/* el número cuenta hacia arriba: se reserva el ancho del valor final para que
+                  lo de al lado no salte de línea mientras anima */}
+              <p className="text-5xl font-black text-slate-900 tracking-tight leading-none tabular-nums inline-grid" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }} data-testid="annual-actual">
+                <span className="invisible col-start-1 row-start-1" aria-hidden="true">{formatCurrency(data?.annual_actual || 0)}</span>
+                <span className="col-start-1 row-start-1">{formatCurrency(animAnnualVal)}</span>
               </p>
               <div className="flex items-center gap-1">
                 <span className="text-slate-400 text-sm font-bold">/</span>

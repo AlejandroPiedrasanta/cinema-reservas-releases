@@ -2903,14 +2903,83 @@ async def set_app_password_endpoint(payload: dict = Body(...)):
     return {"message": "Contraseña guardada"}
 
 
+async def _attempts_guard() -> dict:
+    """Límite de intentos fallidos (Ajustes > Seguridad). Si está bloqueado, 429 con la espera."""
+    doc = await db.app_settings.find_one({}, {"security_config": 1}) or {}
+    cfg = doc.get("security_config") or {}
+    until = cfg.get("locked_until") or ""
+    if until:
+        try:
+            left = (datetime.fromisoformat(until) - datetime.now(timezone.utc)).total_seconds()
+        except Exception:
+            left = 0
+        if left > 0:
+            raise HTTPException(status_code=429, detail=f"Demasiados intentos fallidos. Espera {int(left) + 1} segundos.")
+    return cfg
+
+
+async def _attempt_failed(cfg: dict, base_msg: str):
+    max_att = int(cfg.get("max_attempts", 5) or 5)
+    lock_s = int(cfg.get("lockout_seconds", 60) or 60)
+    failed = int(cfg.get("failed_attempts", 0)) + 1
+    upd = {"security_config.failed_attempts": failed}
+    if failed >= max_att:
+        upd = {"security_config.failed_attempts": 0,
+               "security_config.locked_until": (datetime.now(timezone.utc) + timedelta(seconds=lock_s)).isoformat()}
+    await db.app_settings.update_one({}, {"$set": upd}, upsert=True)
+    if _using_embedded:
+        asyncio.create_task(_save_embedded_data())
+    if failed >= max_att:
+        raise HTTPException(status_code=429, detail=f"Demasiados intentos fallidos. Espera {lock_s} segundos.")
+    left = max_att - failed
+    raise HTTPException(status_code=401, detail=f"{base_msg}. Te queda{'n' if left != 1 else ''} {left} intento{'s' if left != 1 else ''}.")
+
+
+async def _attempts_reset(cfg: dict):
+    if cfg.get("failed_attempts") or cfg.get("locked_until"):
+        await db.app_settings.update_one({}, {"$set": {"security_config.failed_attempts": 0,
+                                                       "security_config.locked_until": ""}})
+        if _using_embedded:
+            asyncio.create_task(_save_embedded_data())
+
+
 @api_router.post("/security/verify")
 async def verify_app_password_endpoint(payload: dict = Body(...)):
     doc = await db.app_settings.find_one({}, {"app_password_hash": 1}) or {}
     if not doc.get("app_password_hash"):
         return {"valid": True}
+    cfg = await _attempts_guard()
     if not _verify_app_password(payload.get("password") or "", doc["app_password_hash"]):
-        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+        await _attempt_failed(cfg, "Contraseña incorrecta")
+    await _attempts_reset(cfg)
     return {"valid": True}
+
+
+@api_router.post("/security/reset-with-license")
+async def reset_password_with_license(payload: dict = Body(...)):
+    """«¿Olvidaste tu contraseña?»: se quita la contraseña de la app con la clave de la
+    licencia de este equipo (la del correo de compra) o la clave maestra."""
+    doc = await db.app_settings.find_one({}, {"app_password_hash": 1}) or {}
+    if not doc.get("app_password_hash"):
+        return {"valid": True, "message": "La app no tiene contraseña."}
+    cfg = await _attempts_guard()
+    key = (payload.get("license_key") or "").strip().strip('"\'')
+    norm = lambda k: "".join((k or "").split()).upper()
+    ok = False
+    try:
+        import license_core as lc
+        stored = (lc._load() or {}).get("key") or ""
+        ok = bool(key) and (lc.is_master(key) or (stored and norm(key) == norm(stored)))
+    except Exception:
+        ok = False
+    if not ok:
+        await _attempt_failed(cfg, "Esa no es la clave de licencia de este equipo")
+    await db.app_settings.update_one({}, {"$unset": {"app_password_hash": "", "app_password_hint": ""},
+                                          "$set": {"security_config.failed_attempts": 0,
+                                                   "security_config.locked_until": ""}})
+    if _using_embedded:
+        await _save_embedded_data()
+    return {"valid": True, "message": "Listo: se quitó la contraseña. Puedes crear una nueva en Ajustes › Seguridad."}
 
 
 @api_router.post("/security/remove-password")
@@ -2918,8 +2987,9 @@ async def remove_app_password_endpoint(payload: dict = Body(...)):
     doc = await db.app_settings.find_one({}, {"app_password_hash": 1}) or {}
     if not doc.get("app_password_hash"):
         raise HTTPException(status_code=400, detail="No hay contraseña configurada")
+    cfg = await _attempts_guard()
     if not _verify_app_password(payload.get("current_password") or "", doc["app_password_hash"]):
-        raise HTTPException(status_code=401, detail="La contraseña actual es incorrecta")
+        await _attempt_failed(cfg, "La contraseña actual es incorrecta")
     await db.app_settings.update_one({}, {"$unset": {"app_password_hash": "", "app_password_hint": ""}})
     if _using_embedded:
         asyncio.create_task(_save_embedded_data())
@@ -5664,6 +5734,82 @@ async def storage_set_location(payload: dict = Body(...)):
     logger.warning(f"Carpeta de datos: {old_dir} -> {DATA_DIR}")
     return {"ok": True, "changed": True, "dir": str(DATA_DIR), "previous_dir": str(old_dir),
             "reloaded": mode == "use_existing"}
+
+
+# ─── Licencia (Ajustes > Licencia) ─────────────────────────────────────────────
+def _license_info() -> dict:
+    """Licencia activa en este equipo, sin revelar la clave completa."""
+    try:
+        import license_core as lc
+    except ImportError:
+        return {"available": False}
+    st = lc.check_local()
+    d = lc._load() or {}
+    key = d.get("key") or st.key or ""
+    master = bool(d.get("master")) and lc.is_master(key)
+    if master:
+        masked = "Clave maestra"
+    elif len(key) > 8:
+        masked = key[:4] + "•" * 6 + key[-4:]
+    else:
+        masked = "•" * len(key)
+    def iso(ts):
+        try:
+            return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat() if ts else ""
+        except Exception:
+            return ""
+    last = d.get("last_check") or d.get("activated_at")
+    try:
+        mid = lc.machine_id()
+    except Exception:
+        mid = ""
+    return {
+        "available": True,
+        "active": bool(st.valid),
+        "reason": st.reason or "",
+        "master": master,
+        "type": "Licencia maestra" if master else ("Licencia Gumroad" if key else ""),
+        "email": "" if master else (d.get("email") or st.email or ""),
+        "key_masked": masked,
+        "activated_at": iso(d.get("activated_at")),
+        "last_check": iso(last),
+        "next_check": "" if master or not last else iso(float(last) + lc.RECHECK_DAYS * 86400),
+        "offline_until": "" if master or not last else iso(float(last) + lc.GRACE_DAYS * 86400),
+        "recheck_days": lc.RECHECK_DAYS, "grace_days": lc.GRACE_DAYS, "max_devices": lc.MAX_DEVICES,
+        "machine": mid[:9].upper().rstrip("-"),
+        "buy_url": lc.buy_url(),
+        "product": lc.APP_NAME, "version": _local_version,
+    }
+
+
+@api_router.get("/license")
+async def license_status():
+    return await asyncio.to_thread(_license_info)
+
+
+@api_router.post("/license/recheck")
+async def license_recheck():
+    """Verificar ahora con Gumroad (renueva los días sin internet)."""
+    def _run():
+        try:
+            import license_core as lc
+            before = (lc._load() or {}).get("last_check")
+            lc.recheck_online()
+            after = (lc._load() or {}).get("last_check")
+            return before != after
+        except Exception:
+            return False
+    renewed = await asyncio.to_thread(_run)
+    info = await asyncio.to_thread(_license_info)
+    if info.get("master"):
+        msg = "La licencia maestra no necesita verificarse."
+    elif renewed:
+        msg = "Licencia verificada ✓"
+    elif info.get("active"):
+        msg = "No se pudo verificar ahora (¿sin internet?). Tu licencia sigue activa."
+    else:
+        msg = info.get("reason") or "No se pudo verificar la licencia."
+    return {**info, "message": msg, "renewed": renewed}
 
 
 @api_router.post("/system/flush")

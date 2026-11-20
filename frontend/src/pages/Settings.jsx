@@ -16,6 +16,7 @@ import { celebrateUpdate } from "@/lib/celebrations";
 import { Section, SectionSearchBar } from "@/components/appearance/SectionShell";
 import { SectionSearchContext } from "@/lib/sectionSearch";
 import { SecuritySection } from "@/components/SecuritySection";
+import LicenseSection from "@/components/LicenseSection";
 import IncidentsPanel from "@/components/IncidentsPanel";
 
 const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } };
@@ -952,6 +953,9 @@ export default function Settings() {
 
         {/* Notifications */}
         {/* ── SEGURIDAD ── */}
+        {/* ── LICENCIA ── */}
+        <LicenseSection />
+
         <SecuritySection />
 
         <Section icon={Bell} title={s.notifTitle} desc={s.notifDesc}

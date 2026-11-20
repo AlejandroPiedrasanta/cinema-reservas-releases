@@ -203,7 +203,7 @@ def uitest(out_dir: str) -> int:
         except Exception as e:
             print("captura no disponible:", e)
 
-    lic.deactivate_local()
+    lic.deactivate_local(force=True)
     stop_server()
 
     def drive(api):
@@ -291,7 +291,7 @@ def uitest(out_dir: str) -> int:
         paso("al cerrar la ventana se detiene el servidor", not port_open(),
              "desde el cierre de la ventana" if por_ventana else "al terminar la app")
     stop_server()
-    lic.deactivate_local()
+    lic.deactivate_local(force=True)
     res["ok"] = all(p["ok"] for p in res["pasos"]) and len(res["pasos"]) >= 8
     (out / "resultado.json").write_text(_json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
     print("RESULTADO:", "OK" if res["ok"] else "FALLO", flush=True)

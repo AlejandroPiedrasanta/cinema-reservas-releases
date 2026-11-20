@@ -40,16 +40,19 @@ _API = "https://api.gumroad.com/v2/licenses/verify"
 # Secreto de ofuscacion del archivo local (no es seguridad fuerte: solo evita
 # que copiar license.json a otro PC o editarlo a mano funcione).
 _SECRET = b"cinema-productions/reservas/lic/v1"
-# Licencia maestra (uso interno de Cinema Productions): entra sin Gumroad, sin
-# limite de equipos y sin revalidar. Solo se guarda el hash, no la clave
-# (clave larga y aleatoria: no se puede adivinar a partir del hash).
-_MASTER_SHA256 = "916a36f6b82f980e30ccba0496fee1cfe3ac4871c07d8e6893100d89b4599896"
+# Licencias maestras (uso interno de Cinema Productions): entran sin Gumroad, sin
+# limite de equipos, sin revalidar y no se pueden borrar desde la app. Solo se guarda
+# el hash. Se aceptan sin importar mayusculas, espacios ni guiones.
+_MASTER_SHA256 = (
+    "916a36f6b82f980e30ccba0496fee1cfe3ac4871c07d8e6893100d89b4599896",   # clave larga
+    "0cfc0f252156f2e5bfe4a88e7f9266b7e9b22227bc5f00eb80c65bb3508e9b10",   # clave de Cinema Productions
+)
 
 
 def is_master(key: str) -> bool:
-    norm = "".join((key or "").split()).upper().replace("-", "")
+    norm = "".join((key or "").split()).upper().replace("-", "").replace("_", "")
     h = hashlib.sha256(b"cinema-master|" + norm.encode()).hexdigest()
-    return hmac.compare_digest(h, _MASTER_SHA256)
+    return any(hmac.compare_digest(h, m) for m in _MASTER_SHA256)
 
 
 def _cfg() -> dict:
@@ -314,8 +317,13 @@ def recheck_online() -> None:
         pass
 
 
-def deactivate_local() -> None:
+def deactivate_local(force: bool = False) -> None:
+    """Quita la licencia de este equipo. La licencia maestra NO se borra (solo con
+    force=True, que usan las pruebas automaticas)."""
     try:
+        d = _load() or {}
+        if not force and d.get("master") and is_master(d.get("key", "")):
+            return
         license_path().unlink()
     except Exception:
         pass

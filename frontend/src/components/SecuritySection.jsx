@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, KeyRound, Trash2, Loader2, Eye, EyeOff, MousePointer2, Copy, TextCursor, Lock, Clock, AlertTriangle, LockKeyhole, Bug, EyeClosed, Camera, MoveDiagonal, FileArchive, RotateCcw, Check } from "lucide-react";
+import { Shield, KeyRound, Trash2, Loader2, Eye, EyeOff, MousePointer2, Copy, TextCursor, Lock, Clock, AlertTriangle, LockKeyhole, Bug, EyeClosed, Camera, MoveDiagonal, FileArchive, RotateCcw, Check, ShieldCheck } from "lucide-react";
 import { useSettings } from "@/context/SettingsContext";
 import { useToast } from "@/hooks/use-toast";
 import { Section } from "@/components/appearance/SectionShell";
@@ -224,6 +224,12 @@ export function SecuritySection() {
             <input type="text" value={hint} onChange={e => setHint(e.target.value)}
               placeholder={es ? "Pista de seguridad (por si la olvidas) — ej: mi película favorita" : "Security hint (in case you forget)"}
               data-testid="security-hint-input" className={inputCls} />
+            <p className="text-[10px] text-slate-500 flex items-start gap-1.5">
+              <ShieldCheck size={11} className="text-emerald-600 shrink-0 mt-px" />
+              {es
+                ? "Si la olvidas, en la pantalla de bloqueo podrás quitarla con tu clave de licencia (la del correo de compra)."
+                : "If you forget it, you can remove it from the lock screen with your license key."}
+            </p>
 
             <motion.button whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.98 }}
               onClick={handleSavePassword} disabled={saving || !newPass}
@@ -484,135 +490,6 @@ export function SecuritySection() {
               );
             })}
           </div>
-        </div>
-
-        {/* ══════════ NUEVA FUNCIÓN 5: Contraseña del ZIP compilado ══════════ */}
-        <div className="border-t border-white/40 pt-5">
-          <div className="flex items-start gap-3 mb-3">
-            <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-emerald-100 to-teal-100 flex items-center justify-center flex-shrink-0">
-              <FileArchive size={16} className="text-emerald-600" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-black text-slate-700">
-                {es ? "Contraseña del ZIP compilado" : "Compiled ZIP password"}
-              </p>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                {es
-                  ? "Al descargar la app de escritorio se comprime con cifrado AES-256. De fábrica: 2868"
-                  : "Desktop app ZIP is encrypted with AES-256. Factory default: 2868"}
-              </p>
-            </div>
-            <button type="button"
-              onClick={() => saveAdvCfg({ zip_password_enabled: !advCfg.zip_password_enabled })}
-              disabled={advSaving}
-              data-testid="zip-password-toggle"
-              role="switch"
-              aria-checked={advCfg.zip_password_enabled}
-              className={`relative w-12 h-6 rounded-full transition-all flex-shrink-0 ${advCfg.zip_password_enabled ? "btn-primary" : "bg-slate-200"}`}>
-              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${advCfg.zip_password_enabled ? "left-[26px]" : "left-0.5"}`} />
-            </button>
-          </div>
-
-          <AnimatePresence>
-            {advCfg.zip_password_enabled && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                className="pl-12 space-y-3 overflow-hidden">
-                <div className="flex items-center gap-2 bg-white/60 border border-emerald-200/60 rounded-2xl p-3">
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex-shrink-0">
-                    {es ? "Actual" : "Current"}:
-                  </p>
-                  <p data-testid="zip-current-password" className="text-sm font-mono font-black text-emerald-700 flex-1 tracking-widest">
-                    {zipPwdShow ? zipPwd.password : "•".repeat(Math.min(zipPwd.password?.length || 4, 12))}
-                  </p>
-                  <button onClick={() => setZipPwdShow(s => !s)} className="text-slate-400 hover:text-slate-600" data-testid="zip-toggle-show">
-                    {zipPwdShow ? <EyeOff size={13} /> : <Eye size={13} />}
-                  </button>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(zipPwd.password);
-                      toast({ title: es ? "Contraseña copiada" : "Password copied" });
-                    }}
-                    className="text-slate-400 hover:text-slate-600"
-                    data-testid="zip-copy-password"
-                    title={es ? "Copiar contraseña" : "Copy password"}
-                  >
-                    <Copy size={12} />
-                  </button>
-                  {zipPwd.is_default && (
-                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 flex-shrink-0">
-                      {es ? "De fábrica" : "Factory"}
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex gap-2">
-                  <input
-                    type={zipPwdShow ? "text" : "password"}
-                    value={zipPwdNew}
-                    onChange={e => setZipPwdNew(e.target.value)}
-                    placeholder={es ? "Nueva contraseña (mín. 3)" : "New password (min. 3)"}
-                    data-testid="zip-new-password-input"
-                    className={inputCls + " flex-1"}
-                  />
-                  <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={async () => {
-                      if (zipPwdNew.length < 3) {
-                        toast({ title: es ? "Mínimo 3 caracteres" : "Min 3 characters", variant: "destructive" });
-                        return;
-                      }
-                      setZipPwdSaving(true);
-                      try {
-                        const res = await setZipPassword(zipPwdNew);
-                        setZipPwd({ password: res.password, is_default: false, enabled: true });
-                        setZipPwdNew("");
-                        toast({ title: es ? "Contraseña ZIP actualizada ✓" : "ZIP password updated ✓" });
-                      } catch (err) {
-                        toast({ title: es ? "Error al guardar" : "Save error", description: err?.response?.data?.detail, variant: "destructive" });
-                      } finally {
-                        setZipPwdSaving(false);
-                      }
-                    }}
-                    disabled={zipPwdSaving || !zipPwdNew}
-                    data-testid="zip-save-password-btn"
-                    className="px-4 py-2 rounded-2xl btn-primary text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-50">
-                    {zipPwdSaving ? <Loader2 size={12} className="animate-spin" /> : <KeyRound size={12} />}
-                    {es ? "Cambiar" : "Change"}
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.03 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={async () => {
-                      if (!window.confirm(es ? "¿Restaurar la contraseña de fábrica (2868)?" : "Restore factory password (2868)?")) return;
-                      try {
-                        const res = await resetZipPassword();
-                        setZipPwd({ password: res.password, is_default: true, enabled: true });
-                        setZipPwdNew("");
-                        toast({ title: es ? "Restaurada a 2868 ✓" : "Reset to 2868 ✓" });
-                      } catch {
-                        toast({ title: "Error", variant: "destructive" });
-                      }
-                    }}
-                    data-testid="zip-reset-password-btn"
-                    className="px-3 py-2 rounded-2xl bg-white/70 hover:bg-white text-slate-500 text-xs font-bold flex items-center gap-1.5"
-                    title={es ? "Restaurar contraseña de fábrica (2868)" : "Reset to factory (2868)"}>
-                    <RotateCcw size={12} />
-                  </motion.button>
-                </div>
-
-                <div className="flex items-start gap-2 text-[10px] text-slate-500 bg-slate-50/70 border border-slate-200 rounded-xl p-2.5">
-                  <AlertTriangle size={11} className="flex-shrink-0 mt-0.5 text-amber-500" />
-                  <span>
-                    {es
-                      ? "El ZIP usa cifrado AES-256. Abre con 7-Zip, WinRAR o cualquier extractor moderno (el ZIP nativo de Windows NO soporta AES)."
-                      : "AES-256 encrypted. Open with 7-Zip / WinRAR (Windows native does NOT support AES)."}
-                  </span>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
       </div>
     </Section>

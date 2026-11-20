@@ -1,30 +1,78 @@
 // ═══════════════════════════════════════════════════════════════════
-// Celebrations — Animaciones épicas para eventos importantes
+// Celebrations — confeti y efectos para momentos importantes
+//
+// · Capa propia ENCIMA de todo (incluidas ventanas como «¡Meta alcanzada!»), sin
+//   bloquear clics.
+// · Se dibuja en un hilo aparte (Web Worker + OffscreenCanvas) cuando el sistema lo
+//   permite: la app no se traba mientras cae el confeti (Windows y Mac).
+// · Si llegan varias celebraciones a la vez (p. ej. 5 metas alcanzadas al abrir Metas)
+//   se juntan en una sola: nada de lluvias encimadas.
+// · Colores del tema activo + paleta de cada tipo; partículas variadas (círculos,
+//   cuadros, estrellas) y lluvia de dinero con billetes y monedas de verdad (💵 🪙).
 // ═══════════════════════════════════════════════════════════════════
 import confettiLib from "canvas-confetti";
 
-// Resolver seguro: soporta tanto ESM default como CJS (module.exports = fn).
-const _confetti = (typeof confettiLib === "function")
+const _lib = (typeof confettiLib === "function")
   ? confettiLib
   : (confettiLib && typeof confettiLib.default === "function" ? confettiLib.default : null);
 
-// Wrapper resiliente: nunca lanza excepciones al llamador.
-const safeConfetti = (opts) => {
+let _fx = null;        // instancia en hilo aparte (si se puede)
+let _fxMain = null;    // instancia en el hilo principal (para figuras con emoji)
+
+function _canvas(id, z) {
+  let c = document.getElementById(id);
+  if (!c) {
+    c = document.createElement("canvas");
+    c.id = id;
+    c.setAttribute("aria-hidden", "true");
+    Object.assign(c.style, {
+      position: "fixed", inset: "0", width: "100vw", height: "100vh",
+      pointerEvents: "none", zIndex: String(z),
+    });
+    document.body.appendChild(c);
+  }
+  return c;
+}
+
+function fx() {
+  if (_fx || !_lib || typeof document === "undefined") return _fx;
   try {
-    if (typeof _confetti === "function") _confetti(opts);
+    _fx = _lib.create(_canvas("cp-confetti", 2147483000), { resize: true, useWorker: true, disableForReducedMotion: true });
+  } catch {
+    try { _fx = _lib.create(_canvas("cp-confetti", 2147483000), { resize: true, useWorker: false, disableForReducedMotion: true }); }
+    catch { _fx = null; }
+  }
+  return _fx;
+}
+function fxMain() {
+  if (_fxMain || !_lib || typeof document === "undefined") return _fxMain;
+  try { _fxMain = _lib.create(_canvas("cp-confetti-main", 2147483001), { resize: true, useWorker: false, disableForReducedMotion: true }); }
+  catch { _fxMain = null; }
+  return _fxMain;
+}
+
+const shoot = (opts, main = false) => {
+  try {
+    const f = main ? fxMain() : fx();
+    if (f) f(opts);
   } catch (e) {
-    // Silenciamos errores de canvas-confetti para no romper el flujo (guardado, push, etc.)
-    console.warn("[confetti] error suppressed:", e?.message || e);
+    console.warn("[confetti]", e?.message || e);   // nunca romper el flujo (guardar, etc.)
   }
 };
 
 const isReducedMotion = () => {
-  try {
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  } catch { return false; }
+  try { return window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch { return false; }
 };
 
-// Paletas de colores por tipo de celebración
+// Colores del tema activo (variables CSS del acento) para que el confeti combine
+const themeColors = () => {
+  try {
+    const cs = getComputedStyle(document.documentElement);
+    return [cs.getPropertyValue("--t-from"), cs.getPropertyValue("--t-to")]
+      .map((c) => c.trim()).filter((c) => /^#|^rgb/.test(c));
+  } catch { return []; }
+};
+
 const PALETTES = {
   reservation: ["#8b5cf6", "#a78bfa", "#c4b5fd", "#f472b6", "#fbbf24"],
   payment:     ["#10b981", "#34d399", "#6ee7b7", "#fbbf24", "#f59e0b"],
@@ -33,145 +81,118 @@ const PALETTES = {
   tutorial:    ["#ec4899", "#f472b6", "#fbbf24", "#a78bfa", "#10b981"],
   success:     ["#10b981", "#34d399", "#3b82f6", "#8b5cf6", "#fbbf24"],
 };
+const colorsFor = (type) => [...(PALETTES[type] || PALETTES.success), ...themeColors()];
 
-// Explosión clásica desde el centro-abajo
-export const fireConfetti = (type = "success", origin = { x: 0.5, y: 0.7 }) => {
-  if (isReducedMotion()) return;
-  const colors = PALETTES[type] || PALETTES.success;
-  const defaults = { origin, colors, ticks: 200, gravity: 0.9, scalar: 1 };
-
-  safeConfetti({ ...defaults, particleCount: 80, spread: 70, startVelocity: 45 });
-  setTimeout(() => safeConfetti({ ...defaults, particleCount: 50, spread: 100, startVelocity: 35, scalar: 0.8 }), 120);
-  setTimeout(() => safeConfetti({ ...defaults, particleCount: 40, spread: 120, startVelocity: 25, scalar: 1.2 }), 240);
+// Juntar celebraciones que llegan casi a la vez: solo la primera (o la más grande) se ve
+let _lastAt = 0;
+let _lastWeight = 0;
+const allow = (weight) => {
+  const now = Date.now();
+  if (now - _lastAt < 1600 && weight <= _lastWeight) return false;
+  _lastAt = now;
+  _lastWeight = weight;
+  return true;
 };
 
-// Explosión doble lateral (más épica)
+const base = { disableForReducedMotion: true, ticks: 240, gravity: 1, decay: 0.92 };
+
+// Explosión desde un punto (guardar reserva, socio, meta…)
+export const fireConfetti = (type = "success", origin = { x: 0.5, y: 0.65 }) => {
+  if (isReducedMotion() || !allow(1)) return;
+  const colors = colorsFor(type);
+  const burst = (ratio, opts) => shoot({
+    ...base, origin, colors, ...opts, particleCount: Math.round(160 * ratio),
+  });
+  burst(0.25, { spread: 26, startVelocity: 55, shapes: ["circle"] });
+  burst(0.2, { spread: 60, scalar: 1.1 });
+  burst(0.35, { spread: 100, decay: 0.91, scalar: 0.85, shapes: ["circle", "square"] });
+  burst(0.1, { spread: 120, startVelocity: 25, decay: 0.92, scalar: 1.25 });
+  burst(0.1, { spread: 120, startVelocity: 45, shapes: ["star"], scalar: 0.9 });
+};
+
+// Dos cañones laterales + estallido central (pago completo, actualización, tutorial)
 export const fireEpic = (type = "success") => {
-  if (isReducedMotion()) return;
-  const colors = PALETTES[type] || PALETTES.success;
-  const end = Date.now() + 900;
-
-  const frame = () => {
-    safeConfetti({ particleCount: 4, angle: 60, spread: 55, origin: { x: 0, y: 0.7 }, colors, startVelocity: 60 });
-    safeConfetti({ particleCount: 4, angle: 120, spread: 55, origin: { x: 1, y: 0.7 }, colors, startVelocity: 60 });
-    if (Date.now() < end) {
-      try { requestAnimationFrame(frame); } catch { /* noop */ }
-    }
+  if (isReducedMotion() || !allow(2)) return;
+  const colors = colorsFor(type);
+  const end = Date.now() + 750;
+  const tick = () => {
+    shoot({ ...base, particleCount: 3, angle: 60, spread: 55, origin: { x: 0, y: 0.72 }, colors, startVelocity: 62 });
+    shoot({ ...base, particleCount: 3, angle: 120, spread: 55, origin: { x: 1, y: 0.72 }, colors, startVelocity: 62 });
+    if (Date.now() < end) setTimeout(tick, 32);
   };
-  try { frame(); } catch (e) { /* noop */ }
-
-  // Explosión central final
+  tick();
   setTimeout(() => {
-    safeConfetti({ particleCount: 150, spread: 160, origin: { x: 0.5, y: 0.5 }, colors, startVelocity: 50, scalar: 1.3, ticks: 300 });
-  }, 700);
+    shoot({ ...base, particleCount: 110, spread: 150, origin: { x: 0.5, y: 0.5 }, colors, startVelocity: 48, scalar: 1.15, ticks: 300 });
+    shoot({ ...base, particleCount: 25, spread: 160, origin: { x: 0.5, y: 0.5 }, colors: ["#fbbf24", "#fde68a"], shapes: ["star"], startVelocity: 40, scalar: 1.2 });
+  }, 650);
 };
 
-// Lluvia de estrellas/dinero desde arriba
+// Lluvia suave de estrellas (abonos / pagos)
 export const fireStars = (type = "payment") => {
-  if (isReducedMotion()) return;
-  const colors = PALETTES[type] || PALETTES.payment;
-  const duration = 2500;
-  const end = Date.now() + duration;
-
-  const interval = setInterval(() => {
-    if (Date.now() > end) { clearInterval(interval); return; }
-    safeConfetti({
-      particleCount: 3,
-      startVelocity: 0,
-      gravity: 0.5,
-      ticks: 250,
-      origin: { x: Math.random(), y: -0.1 },
-      colors,
-      shapes: ["star"],
-      scalar: Math.random() * 0.8 + 0.6,
+  if (isReducedMotion() || !allow(1)) return;
+  const colors = colorsFor(type);
+  const end = Date.now() + 1800;
+  const iv = setInterval(() => {
+    if (Date.now() > end) { clearInterval(iv); return; }
+    shoot({
+      ...base, particleCount: 2, startVelocity: 0, gravity: 0.55, ticks: 260, decay: 0.95,
+      origin: { x: Math.random(), y: -0.08 }, colors, shapes: ["star"], scalar: Math.random() * 0.7 + 0.7,
     });
-  }, 100);
+  }, 110);
 };
 
-// ══════════════ Sidebar shine sweep ══════════════
-// Dispara un barrido de luz en el sidebar via evento global
+// ══════════════ Barrido de luz del menú lateral ══════════════
 export const triggerSidebarSweep = (color = "purple") => {
-  try {
-    window.dispatchEvent(new CustomEvent("cp:sidebar-sweep", { detail: { color } }));
-  } catch (e) {
-    console.warn("[sidebar-sweep] error:", e?.message || e);
-  }
+  try { window.dispatchEvent(new CustomEvent("cp:sidebar-sweep", { detail: { color } })); }
+  catch (e) { console.warn("[sidebar-sweep]", e?.message || e); }
 };
 
 // ══════════════ Celebraciones específicas ══════════════
-export const celebrateReservation = () => {
-  fireConfetti("reservation");
-  triggerSidebarSweep("purple");
+export const celebrateReservation = () => { fireConfetti("reservation"); triggerSidebarSweep("purple"); };
+export const celebratePayment     = () => { fireStars("payment");       triggerSidebarSweep("emerald"); };
+export const celebrateFullPayment = () => { fireEpic("payment");        triggerSidebarSweep("emerald"); };
+export const celebrateSocio       = () => { fireConfetti("socio", { x: 0.5, y: 0.6 }); triggerSidebarSweep("blue"); };
+export const celebrateUpdate      = () => { fireEpic("update");         triggerSidebarSweep("amber"); };
+export const celebrateTutorial    = () => { fireEpic("tutorial"); };
+
+// ══════════════ Lluvia de dinero — metas alcanzadas ══════════════
+let _money = null;
+const moneyShapes = () => {
+  if (_money) return _money;
+  try {
+    const t = _lib && _lib.shapeFromText;
+    _money = t ? [t({ text: "💵", scalar: 2.2 }), t({ text: "🪙", scalar: 2 }), t({ text: "💰", scalar: 2.2 })] : [];
+  } catch { _money = []; }
+  return _money;
 };
 
-export const celebratePayment = () => {
-  fireStars("payment");
-  triggerSidebarSweep("emerald");
-};
-
-export const celebrateFullPayment = () => {
-  fireEpic("payment");
-  triggerSidebarSweep("emerald");
-};
-
-export const celebrateSocio = () => {
-  fireConfetti("socio", { x: 0.5, y: 0.6 });
-  triggerSidebarSweep("blue");
-};
-
-export const celebrateUpdate = () => {
-  fireEpic("update");
-  triggerSidebarSweep("amber");
-};
-
-export const celebrateTutorial = () => {
-  fireEpic("tutorial");
-};
-
-// ══════════════ Money rain — para logros de metas ══════════════
-// Dispara una lluvia de billetes/monedas simulada usando emojis en shapes
-export const fireMoneyRain = (durationMs = 4200) => {
-  if (isReducedMotion()) return;
+export const fireMoneyRain = (durationMs = 2600) => {
+  if (isReducedMotion() || !allow(3)) return;
+  const shapes = moneyShapes();
   const end = Date.now() + durationMs;
-  const moneyColors = ["#10b981", "#059669", "#34d399", "#fbbf24", "#f59e0b", "#84cc16"];
-
-  const interval = setInterval(() => {
-    if (Date.now() > end) { clearInterval(interval); return; }
-    // Lluvia principal
-    safeConfetti({
-      particleCount: 6,
-      startVelocity: 15,
-      gravity: 1.1,
-      ticks: 300,
-      origin: { x: Math.random(), y: -0.15 },
-      colors: moneyColors,
-      shapes: ["square"],
-      scalar: 1.4,
-      drift: (Math.random() - 0.5) * 0.6,
-    });
-    // Monedas doradas ocasionales
-    if (Math.random() < 0.5) {
-      safeConfetti({
-        particleCount: 2,
-        startVelocity: 10,
-        gravity: 1.3,
-        ticks: 260,
-        origin: { x: Math.random(), y: -0.1 },
-        colors: ["#fbbf24", "#f59e0b", "#fde68a"],
-        shapes: ["circle"],
-        scalar: 1.1,
+  const iv = setInterval(() => {
+    if (Date.now() > end) { clearInterval(iv); return; }
+    if (shapes.length) {
+      // billetes y monedas de verdad (emoji): hilo principal, pocas piezas y grandes
+      shoot({
+        particleCount: 2, startVelocity: 8, gravity: 0.9, ticks: 320, decay: 0.96, flat: false,
+        origin: { x: Math.random(), y: -0.12 }, shapes, scalar: 2.2, drift: (Math.random() - 0.5) * 0.8,
+      }, true);
+    } else {
+      shoot({
+        ...base, particleCount: 4, startVelocity: 12, gravity: 1.05, ticks: 300,
+        origin: { x: Math.random(), y: -0.12 }, colors: ["#10b981", "#34d399", "#84cc16"], shapes: ["square"], scalar: 1.4,
       });
     }
-  }, 90);
-
-  // Explosión épica final
-  setTimeout(() => {
-    fireEpic("payment");
-  }, 400);
+  }, 120);
+  // estallido dorado al empezar
+  setTimeout(() => shoot({
+    ...base, particleCount: 120, spread: 140, origin: { x: 0.5, y: 0.55 }, startVelocity: 46, scalar: 1.1,
+    colors: ["#10b981", "#34d399", "#fbbf24", "#f59e0b", "#fde68a", ...themeColors()],
+  }), 250);
 };
 
-// Celebración específica de meta alcanzada
 export const celebrateGoalReached = () => {
-  fireMoneyRain(4500);
+  fireMoneyRain(2600);
   triggerSidebarSweep("emerald");
 };

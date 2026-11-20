@@ -1259,15 +1259,18 @@ export default function DatabasePage() {
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.3em] text-slate-400 mb-2">
               <span className="w-6 h-px bg-slate-300" />
-              Sección · almacenamiento
+              {language === "en" ? "Section · storage" : "Sección · almacenamiento"}
             </div>
             <h1 className="text-[52px] leading-none font-black text-slate-900 tracking-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
-              Base de <span className="italic font-light text-slate-500">datos</span>
+              {language === "en" ? <>Data<span className="italic font-light text-slate-500">base</span></>
+                : <>Base de <span className="italic font-light text-slate-500">datos</span></>}
             </h1>
             <p className="text-sm text-slate-500 font-medium mt-3 max-w-xl">
-              {advancedMode
-                ? "Respaldos, conexión y herramientas avanzadas — soporte, diagnóstico y zona de peligro."
-                : "Todo el estado de tu app: reservas, socios y ajustes. Respalda y conecta la nube en un clic."}
+              {language === "en"
+                ? "Your reservations, partners and settings: backups, restore and storage location."
+                : advancedMode
+                  ? "Respaldos, conexión y herramientas avanzadas — soporte, diagnóstico y zona de peligro."
+                  : "Todo el estado de tu app: reservas, socios y ajustes. Respalda y conecta la nube en un clic."}
             </p>
           </div>
 

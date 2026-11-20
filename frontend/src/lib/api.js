@@ -177,6 +177,11 @@ export const chooseDataFolder   = () => api.post("/storage/choose-folder", null,
 export const setDataLocation    = (dir, mode) => api.post("/storage/location", { dir, mode }).then(r => r.data);
 export const openDataFolder     = () => api.post("/storage/open-folder").then(r => r.data);
 
+// Licencia activa (Ajustes > Licencia)
+export const getLicense     = () => api.get("/license").then(r => r.data);
+export const resetPasswordWithLicense = (license_key) => api.post("/security/reset-with-license", { license_key }).then(r => r.data);
+export const recheckLicense = () => api.post("/license/recheck", null, { timeout: 30000 }).then(r => r.data);
+
 // Notifications
 // Pop-ups nativos de Windows/macOS (los muestra el servidor, y Windows los guarda programados)
 export const getDesktopNotifStatus = () => api.get("/notifications/desktop/status").then(r => r.data);

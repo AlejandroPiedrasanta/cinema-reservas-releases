@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Lock, Unlock, Eye, EyeOff, Loader2, Lightbulb, ShieldCheck } from "lucide-react";
+import { Lock, Unlock, Eye, EyeOff, Loader2, Lightbulb, ShieldCheck, KeyRound } from "lucide-react";
 import { useSettings } from "@/context/SettingsContext";
-import { verifyAppPassword } from "@/lib/api";
+import { verifyAppPassword, resetPasswordWithLicense } from "@/lib/api";
 
 export default function LockScreen() {
   const { security, unlockApp } = useSettings();
@@ -12,6 +12,23 @@ export default function LockScreen() {
   const [loading, setLoading] = useState(false);
   const [showHint, setShowHint] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
+  const [errMsg, setErrMsg] = useState("");
+  const [licKey, setLicKey] = useState("");
+  const [licBusy, setLicBusy] = useState(false);
+  const [licMsg, setLicMsg] = useState("");
+
+  const unlockWithLicense = async (e) => {
+    e?.preventDefault();
+    if (!licKey.trim() || licBusy) return;
+    setLicBusy(true); setLicMsg("");
+    try {
+      await resetPasswordWithLicense(licKey.trim());
+      setUnlocking(true);
+      setTimeout(() => unlockApp(), 650);
+    } catch (err) {
+      setLicMsg(err?.response?.data?.detail || "No se pudo comprobar la clave");
+    } finally { setLicBusy(false); }
+  };
 
   const handleUnlock = async (e) => {
     e?.preventDefault();
@@ -22,8 +39,9 @@ export default function LockScreen() {
       await verifyAppPassword(password);
       setUnlocking(true);
       setTimeout(() => unlockApp(), 650);
-    } catch {
+    } catch (err) {
       setError(true);
+      setErrMsg(err?.response?.data?.detail || "Contraseña incorrecta — inténtalo de nuevo");
       setPassword("");
       setTimeout(() => setError(false), 700);
     } finally {
@@ -90,10 +108,10 @@ export default function LockScreen() {
           </motion.div>
 
           <AnimatePresence>
-            {error && (
+            {errMsg && (
               <motion.p initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                 className="text-xs font-bold text-red-400" data-testid="lock-error-msg">
-                Contraseña incorrecta — inténtalo de nuevo
+                {errMsg}
               </motion.p>
             )}
           </AnimatePresence>
@@ -116,6 +134,7 @@ export default function LockScreen() {
               ¿Olvidaste tu contraseña?
             </button>
           ) : (
+            <div className="space-y-3">
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
               className="flex items-start gap-2.5 text-left rounded-2xl px-4 py-3"
               style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.25)" }}
@@ -124,10 +143,31 @@ export default function LockScreen() {
               <div>
                 <p className="text-[10px] font-black text-amber-300 uppercase tracking-wider">Tu pista</p>
                 <p className="text-xs text-amber-100/90 mt-0.5">
-                  {security.hint || "No configuraste una pista. Contacta al administrador de tu base de datos."}
+                  {security.hint || "No configuraste una pista."}
                 </p>
               </div>
             </motion.div>
+            {/* Recuperar: quitar la contraseña con la clave de licencia de este equipo */}
+            <form onSubmit={unlockWithLicense} className="text-left rounded-2xl px-4 py-3 space-y-2"
+              style={{ background: "rgba(99,102,241,0.12)", border: "1px solid rgba(129,140,248,0.3)" }} data-testid="lock-license-box">
+              <p className="text-[10px] font-black text-indigo-200 uppercase tracking-wider flex items-center gap-1.5">
+                <KeyRound size={12} /> Desbloquear con tu clave de licencia
+              </p>
+              <p className="text-[11px] text-indigo-100/80">Pega la clave que te llegó por correo al comprar. Se quitará la contraseña y podrás crear otra.</p>
+              <div className="flex gap-2">
+                <input value={licKey} onChange={e => setLicKey(e.target.value)} placeholder="Clave de licencia"
+                  data-testid="lock-license-input"
+                  className="flex-1 min-w-0 px-3 py-2 rounded-xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-400/60"
+                  style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)" }} />
+                <button type="submit" disabled={licBusy || !licKey.trim()} data-testid="lock-license-btn"
+                  className="px-3 py-2 rounded-xl text-xs font-black text-white disabled:opacity-50"
+                  style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
+                  {licBusy ? <Loader2 size={13} className="animate-spin" /> : "Usar"}
+                </button>
+              </div>
+              {licMsg && <p className="text-[11px] font-bold text-red-300" data-testid="lock-license-msg">{licMsg}</p>}
+            </form>
+            </div>
           )}
         </div>
       </motion.div>

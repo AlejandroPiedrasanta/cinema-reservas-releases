@@ -275,7 +275,8 @@ export default function Socios() {
   const [hidePaidIds,  setHidePaidIds]  = useState(() => new Set());
   const [profileSocio, setProfileSocio] = useState(null);
   const dragIdRef = useRef(null);
-  const { formatCurrency } = useSettings();
+  const { formatCurrency, language } = useSettings();
+  const es = language !== "en";
   const { toast } = useToast();
 
   const load = async ({ silent = false } = {}) => {
@@ -359,8 +360,9 @@ export default function Socios() {
     <div className="px-6 py-8 max-w-7xl mx-auto">
       <PageHeader
         icon={Users}
-        title="Socios"
-        subtitle={`${socios.length} ${socios.length === 1 ? "socio registrado" : "socios registrados"}`}
+        title={es ? "Socios" : "Partners"}
+        subtitle={es ? `${socios.length} ${socios.length === 1 ? "socio registrado" : "socios registrados"}`
+                     : `${socios.length} ${socios.length === 1 ? "partner" : "partners"} registered`}
         gradient="linear-gradient(135deg,#8b5cf6,#a855f7,#ec4899)"
         right={(
           <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}

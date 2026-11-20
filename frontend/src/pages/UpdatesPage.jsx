@@ -43,7 +43,7 @@ const STEPS = [
 
 export default function UpdatesPage() {
   const { toast } = useToast();
-  const { autoCheckUpdates, changeAutoCheckUpdates } = useSettings();
+  const { autoCheckUpdates, changeAutoCheckUpdates, language } = useSettings();
   const fileRef = useRef();
 
   // Upload state
@@ -320,9 +320,9 @@ export default function UpdatesPage() {
           </div>
           <div>
             <h1 className="text-5xl font-black gradient-text tracking-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
-              Actualizaciones
+              {language === "en" ? "Updates" : "Actualizaciones"}
             </h1>
-            <p className="text-sm text-slate-500 font-medium mt-1">Mantén Cinema Reservas al día · tus datos se conservan</p>
+            <p className="text-sm text-slate-500 font-medium mt-1">{language === "en" ? "Keep Cinema Reservas up to date · your data is kept" : "Mantén Cinema Reservas al día · tus datos se conservan"}</p>
           </div>
         </div>
         {cfgLoaded

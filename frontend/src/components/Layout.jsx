@@ -110,7 +110,7 @@ export default function Layout({ children }) {
     "/base-de-datos":   { label: tr.nav.database || "Base de Datos", icon: Database,           tile: "linear-gradient(135deg,#22d3ee,#0891b2)" },
     "/apariencia":      { label: tr.nav.appearance || "Apariencia",  icon: Palette,            tile: "linear-gradient(135deg,#a78bfa,#7c3aed)" },
     "/ajustes":         { label: tr.nav.settings,                    icon: SlidersHorizontal,  tile: "linear-gradient(135deg,#94a3b8,#475569)" },
-    "/actualizaciones": { label: "Actualizaciones",                  icon: RefreshCw,          tile: "linear-gradient(135deg,#fb7185,#e11d48)" },
+    "/actualizaciones": { label: tr.nav.updates || "Actualizaciones",                  icon: RefreshCw,          tile: "linear-gradient(135deg,#fb7185,#e11d48)" },
   };
   const navItems = (navConfig || Object.keys(NAV_DEFS).map(p => ({ path: p, custom: "" })))
     .map(c => NAV_DEFS[c.path] ? { path: c.path, label: c.custom || NAV_DEFS[c.path].label, icon: NAV_DEFS[c.path].icon, tile: NAV_DEFS[c.path].tile } : null)
