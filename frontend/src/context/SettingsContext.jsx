@@ -390,13 +390,12 @@ export function SettingsProvider({ children }) {
   const changeSocioFormDesign = (val) => { setSocioFormDesign(val); localStorage.setItem("socio_form_design", val); };
 
   // ── Form fields visibility ────────────────────────────────────────────────
-  const FORM_FIELDS_DEFAULT = { email: false, guests: false, package: false };
+  // La sección "Campos de Formulario" de Apariencia se quitó: los formularios muestran
+  // SIEMPRE todos sus campos (correo, invitados, paquete; foto del socio…), sin importar
+  // lo que se hubiera ocultado antes (si no, quedarían ocultos sin forma de activarlos).
   const [formFieldsVisibility, setFormFieldsVisibility] = useState(() => {
-    try {
-      const saved = localStorage.getItem("form_fields_visibility");
-      if (saved === null) return FORM_FIELDS_DEFAULT;
-      return { ...FORM_FIELDS_DEFAULT, ...JSON.parse(saved) };
-    } catch { return FORM_FIELDS_DEFAULT; }
+    try { localStorage.removeItem("form_fields_visibility"); } catch { /* ignore */ }
+    return {};
   });
   const changeFormFieldVisibility = (field, visible) => {
     setFormFieldsVisibility(prev => {
@@ -412,8 +411,8 @@ export function SettingsProvider({ children }) {
 
   // ── Socio fields visibility ───────────────────────────────────────────────
   const [socioFieldsVisibility, setSocioFieldsVisibility] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("socio_fields_visibility") || "{}"); }
-    catch { return {}; }
+    try { localStorage.removeItem("socio_fields_visibility"); } catch { /* ignore */ }
+    return {};
   });
   const changeSocioFieldVisibility = (field, visible) => {
     setSocioFieldsVisibility(prev => {

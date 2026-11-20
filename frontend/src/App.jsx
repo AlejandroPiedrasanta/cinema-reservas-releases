@@ -82,15 +82,16 @@ function AnimatedRoutes() {
 }
 
 /**
- * Ahorro de energía y fluidez (Windows y Mac): si la ventana está en segundo plano o
- * nadie la toca durante 20 s, se pausan las animaciones decorativas (CSS y de framer-motion).
- * Vuelven al instante con el ratón, el teclado o al volver a la ventana. Antes la app
- * gastaba más de un núcleo de CPU/GPU solo por tenerla abierta sin usarla.
+ * Ahorro de energía (Windows y Mac): cuando la ventana está en segundo plano o minimizada,
+ * las animaciones decorativas se CONGELAN (CSS y framer-motion) y vuelven al instante al
+ * volver a la ventana o pasar el ratón por encima. Mientras usas la app (aunque no muevas
+ * el ratón) todo va a 60 fps: nunca se ralentiza a saltos. Antes la app gastaba más de un
+ * núcleo de CPU/GPU solo por estar abierta detrás de otras ventanas.
  */
 function useQuietMode() {
   useEffect(() => {
     const root = document.documentElement;
-    const IDLE_MS = 20000;
+    const AWAY_MS = 8000;   // ratón encima de la ventana sin foco: congelar de nuevo a los 8 s
     let quiet = false, idleTimer = null, repauseTimer = null, lastWake = 0;
     let paused = [];
     const pauseScripted = () => {
@@ -118,13 +119,16 @@ function useQuietMode() {
         paused = [];
       }
     };
+    const away = () => document.hidden || !document.hasFocus();
     const wake = () => {
       const now = Date.now();
       if (!quiet && now - lastWake < 300) return;          // el ratón dispara mucho: basta cada 300 ms
       lastWake = now;
       setQuiet(false);
       clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => setQuiet(true), IDLE_MS);
+      // solo si la ventana NO está activa (p. ej. ratón encima sin hacer clic): volver a
+      // congelar cuando el ratón se va. Con la ventana activa nunca se congela.
+      if (away()) idleTimer = setTimeout(() => { if (away()) setQuiet(true); }, AWAY_MS);
     };
     const sleep = () => { clearTimeout(idleTimer); setQuiet(true); };
     const onVisibility = () => (document.hidden ? sleep() : wake());
@@ -132,7 +136,7 @@ function useQuietMode() {
     evs.forEach((e) => window.addEventListener(e, wake, { passive: true, capture: true }));
     window.addEventListener("blur", sleep);
     document.addEventListener("visibilitychange", onVisibility);
-    wake();
+    if (away()) sleep(); else wake();
     return () => {
       evs.forEach((e) => window.removeEventListener(e, wake, { capture: true }));
       window.removeEventListener("blur", sleep);

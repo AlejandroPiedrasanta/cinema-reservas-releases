@@ -735,6 +735,7 @@ class NotificationSettingsModel(BaseModel):
     reminder_time: Optional[str] = "09:00"
     reminder_hours_before: Optional[int] = 0
     desktop_notifications: Optional[bool] = None
+    email_enabled: Optional[bool] = None
     admin_email: Optional[str] = None
     admin_whatsapp: Optional[str] = None
     notification_channel: str = "email"
@@ -1102,6 +1103,11 @@ async def get_app_settings():
         doc["has_resend_key"] = True
     else:
         doc["has_resend_key"] = False
+    # el token de Telegram no se devuelve: la pantalla muestra puntos y, si no se cambia,
+    # al guardar no se toca (antes la pantalla lo veía vacío y al guardar lo borraba)
+    doc["has_telegram_token"] = bool(doc.get("telegram_bot_token"))
+    if doc.get("telegram_bot_token"):
+        doc["telegram_bot_token"] = "****"
     return doc
 
 
@@ -1130,6 +1136,10 @@ async def update_app_settings(settings: NotificationSettingsModel):
         saved["has_resend_key"] = True
     elif saved:
         saved["has_resend_key"] = False
+    if saved:
+        saved["has_telegram_token"] = bool(saved.get("telegram_bot_token"))
+        if saved.get("telegram_bot_token"):
+            saved["telegram_bot_token"] = "****"
     return saved or {}
 
 
@@ -1859,15 +1869,28 @@ async def export_reservations_xlsx():
 
 @api_router.post("/reminders/send")
 async def trigger_reminders_manual():
-    """Botón "Enviar a todos los canales": avisa ya del próximo evento con un pop-up."""
-    if not notificador.supported():
-        return {"success": True, "events_found": 0, "sent": 0,
-                "message": "Este equipo no admite notificaciones emergentes"}
-    try:
-        res = await desktop_notifications_next()
-        return {"success": True, "events_found": 1, "sent": 1, "message": res["message"]}
-    except HTTPException as e:
-        return {"success": False, "events_found": 0, "sent": 0, "message": e.detail}
+    """Botón "Probar todos los canales": manda YA el aviso del próximo evento por cada canal
+    activo (pop-up del equipo, Telegram, celular con ntfy, correo) y dice cómo fue en cada uno."""
+    settings = await db.app_settings.find_one({}, {"_id": 0}) or {}
+    msg = await _next_event_message(settings) or ("Prueba de recordatorio ✓",
+                                                   ["Así te avisará Cinema Reservas de tus eventos."])
+    results = {}
+    if notificador.supported() and settings.get("desktop_notifications") is not False:
+        r = await asyncio.to_thread(notificador.notify, msg[0], msg[1], "prueba-canales")
+        results["Este equipo"] = "ok" if r["ok"] else r["error"]
+    remote = _remote_channels(settings)
+    if remote:
+        rr = await _send_remote(settings, remote, msg[0], msg[1])
+        for k, v in rr.items():
+            results[_CHANNEL_NAMES[k].capitalize()] = v
+    if not results:
+        return {"success": False, "events_found": 0, "sent": 0, "results": {},
+                "message": "No hay ningún canal activo. Activa al menos uno."}
+    ok = [k for k, v in results.items() if v == "ok"]
+    bad = [f"{k} ({v})" for k, v in results.items() if v != "ok"]
+    return {"success": bool(ok), "events_found": 1, "sent": len(ok), "results": results,
+            "message": ("Enviado a: " + ", ".join(ok) if ok else "No se pudo enviar")
+                       + (". Falló: " + "; ".join(bad) if bad else "")}
 
 
 
@@ -5280,73 +5303,162 @@ async def _reminder_docs(now: datetime, settings: dict) -> list:
     ).to_list(None)
 
 
+def _remote_channels(settings: dict) -> list:
+    """Canales por internet activos y configurados (además del pop-up del equipo)."""
+    out = []
+    if settings.get("telegram_enabled") and settings.get("telegram_bot_token") and settings.get("telegram_chat_id"):
+        out.append("telegram")
+    if settings.get("ntfy_enabled") and (settings.get("ntfy_topic") or "").strip():
+        out.append("ntfy")
+    if settings.get("email_enabled") is not False and settings.get("resend_api_key") and settings.get("admin_email"):
+        out.append("email")
+    return out
+
+
+async def _send_remote(settings: dict, channels: list, title: str, lines: list) -> dict:
+    """Envía un recordatorio por Telegram / ntfy (celular) / correo. Devuelve {canal: ok|error}."""
+    import httpx
+    import html as _html
+    body = "\n".join(l for l in lines if l)
+    company = settings.get("company_name") or settings.get("resend_sender_name") or "Cinema Reservas"
+    results: dict = {}
+    async with httpx.AsyncClient(timeout=15) as c:
+        for ch in channels:
+            try:
+                if ch == "telegram":
+                    r = await c.post(
+                        f"https://api.telegram.org/bot{settings['telegram_bot_token']}/sendMessage",
+                        json={"chat_id": settings["telegram_chat_id"], "parse_mode": "HTML",
+                              "text": f"🔔 <b>{_html.escape(title)}</b>\n{_html.escape(body)}"})
+                    r.raise_for_status()
+                elif ch == "ntfy":
+                    # JSON: admite acentos y emojis (las cabeceras HTTP no)
+                    r = await c.post("https://ntfy.sh/", json={
+                        "topic": settings["ntfy_topic"].strip(), "title": title, "message": body or title,
+                        "priority": 4, "tags": ["bell"]})
+                    r.raise_for_status()
+                elif ch == "email":
+                    import resend as _resend
+                    _resend.api_key = settings["resend_api_key"]
+                    rows = "".join(f"<p style='margin:4px 0;color:#334155'>{_html.escape(l)}</p>" for l in lines if l)
+                    await asyncio.to_thread(_resend.Emails.send, {
+                        "from": f"{company} <onboarding@resend.dev>",
+                        "to": [settings["admin_email"]],
+                        "subject": f"Recordatorio: {title}",
+                        "html": (f"<div style='font-family:Segoe UI,Arial,sans-serif;padding:16px'>"
+                                 f"<h2 style='margin:0 0 8px;color:#4f46e5'>🔔 {_html.escape(title)}</h2>{rows}"
+                                 f"<p style='margin-top:16px;color:#94a3b8;font-size:12px'>Enviado por Cinema Reservas</p></div>"),
+                    })
+                results[ch] = "ok"
+            except Exception as e:
+                results[ch] = _friendly_channel_error(ch, e)
+    return results
+
+
+def _friendly_channel_error(ch: str, e: Exception) -> str:
+    """Mensaje claro y SIN datos secretos (los errores de httpx incluyen la URL con el token)."""
+    import httpx
+    if isinstance(e, httpx.HTTPStatusError):
+        code = e.response.status_code
+        if ch == "telegram":
+            return {401: "el token del bot no es válido", 404: "el token del bot no es válido",
+                    400: "el chat ID no es válido o no le has escrito al bot",
+                    403: "el bot no puede escribirte: ábrelo en Telegram y pulsa Iniciar"}.get(code, f"error {code}")
+        if ch == "ntfy":
+            return {429: "demasiados envíos, prueba en un minuto"}.get(code, f"error {code} del servicio ntfy")
+        return f"error {code}"
+    if isinstance(e, (httpx.ConnectError, httpx.TimeoutException)):
+        return "sin conexión a internet"
+    msg = str(e)
+    if ch == "email":
+        low = msg.lower()
+        if "api key" in low or "unauthorized" in low or "401" in low:
+            return "la clave de Resend no es válida"
+        if "testing emails" in low or "verify a domain" in low or "own email" in low:
+            return "con la cuenta gratis de Resend solo puedes enviarte a tu propio correo"
+    return re.sub(r"https?://\S+", "", msg)[:140] or "error desconocido"
+
+
+_CHANNEL_NAMES = {"telegram": "Telegram", "ntfy": "celular (ntfy)", "email": "correo"}
+
+
 async def _run_reminders() -> dict:
-    """Revisa y envía los recordatorios que ya tocan. Devuelve un resumen."""
+    """Revisa y envía los recordatorios que ya tocan, por todos los canales activos:
+    pop-up del equipo + Telegram / celular (ntfy) / correo. Devuelve un resumen."""
     async with _reminder_lock:
         settings = await db.app_settings.find_one({}, {"_id": 0}) or {}
         now = _reminder_now(settings)
         _reminder_state["last_check"] = now.strftime("%Y-%m-%d %H:%M:%S")
-        if not notificador.supported():
-            return {"sent": 0, "due": 0}
-        active = bool(settings.get("reminders_enabled")) and settings.get("desktop_notifications") is not False
+        desk_on = notificador.supported() and settings.get("desktop_notifications") is not False
+        remote = _remote_channels(settings)
+        active = bool(settings.get("reminders_enabled")) and (desk_on or bool(remote))
         due, upcoming = [], []
         if active:
             docs = await _reminder_docs(now, settings)
             due, upcoming = _reminder_plan(docs, settings, now)
-        await _sync_windows_schedule(upcoming, settings)
+        await _sync_windows_schedule(upcoming if desk_on else [], settings)
         if not due:
             return {"sent": 0, "due": 0}
         sent_keys = {d["key"] for d in await db.reminder_log.find(
             {"key": {"$in": [it["key"] for it in due]}}, {"key": 1}).to_list(None)}
-        # los que Windows ya tenía programados a esa hora los mostró Windows: no repetir
-        sched_keys = {d["key"] for d in await db.reminder_sched.find(
-            {"key": {"$in": [it["key"] for it in due]}, "at": {"$lte": now.strftime("%Y-%m-%dT%H:%M")}},
-            {"key": 1}).to_list(None)}
-        done_by_windows = [it for it in due if it["key"] not in sent_keys and it["key"] in sched_keys]
-        if done_by_windows:
-            stamp = datetime.now(timezone.utc).isoformat()
-            for it in done_by_windows:
-                for k in it["covers"]:
-                    await db.reminder_log.update_one({"key": k}, {"$set": {"key": k, "sent_at": stamp, "by": "windows",
-                                                      "event_date": it["event_date"]}}, upsert=True)
-                sent_keys.add(it["key"])
         pending = [it for it in due if it["key"] not in sent_keys]
-        sent = 0
-        if len(pending) > 4:                         # muchos a la vez: uno de resumen
+        if not pending:
+            return {"sent": 0, "due": 0}
+        # los que Windows ya mostró a su hora (programados) no se repiten en pantalla,
+        # pero sí se mandan al celular / Telegram / correo
+        sched_keys = {d["key"] for d in await db.reminder_sched.find(
+            {"key": {"$in": [it["key"] for it in pending]}, "at": {"$lte": now.strftime("%Y-%m-%dT%H:%M")}},
+            {"key": 1}).to_list(None)}
+        ok_items, errors = [], []
+        many = len(pending) > 4
+        if many:                                     # muchos a la vez: un solo aviso de resumen
             names = ", ".join(it["title"].split(" · ", 1)[-1] for it in pending[:3])
-            res = await asyncio.to_thread(
-                notificador.notify, "Tienes %d eventos próximos" % len(pending),
-                [names + ("…" if len(pending) > 3 else ""), "Abre Cinema Reservas para ver el detalle"],
-                "resumen")
-            ok_items = pending if res["ok"] else []
-            if not res["ok"]:
-                _reminder_state["error"] = res["error"]
+            title = "Tienes %d eventos próximos" % len(pending)
+            lines = [names + ("…" if len(pending) > 3 else ""), "Abre Cinema Reservas para ver el detalle"]
+            ok = False
+            if desk_on:
+                res = await asyncio.to_thread(notificador.notify, title, lines, "resumen")
+                ok = ok or res["ok"]
+                if not res["ok"]:
+                    errors.append(res["error"])
+            if remote:
+                rr = await _send_remote(settings, remote, title, lines)
+                ok = ok or any(v == "ok" for v in rr.values())
+                errors += [f"{_CHANNEL_NAMES[k]}: {v}" for k, v in rr.items() if v != "ok"]
+            if ok:
+                ok_items = list(pending)
         else:
-            ok_items = []
             for it in pending:
-                res = await asyncio.to_thread(notificador.notify, it["title"], it["lines"],
-                                              it["key"].replace("|", "-")[-60:])
-                if res["ok"]:
+                ok = False
+                if desk_on:
+                    if it["key"] in sched_keys:
+                        ok = True                    # ya lo mostró Windows
+                    else:
+                        res = await asyncio.to_thread(notificador.notify, it["title"], it["lines"],
+                                                      it["key"].replace("|", "-")[-60:])
+                        ok = res["ok"]
+                        if not res["ok"]:
+                            errors.append(res["error"])
+                if remote:
+                    rr = await _send_remote(settings, remote, it["title"], it["lines"])
+                    ok = ok or any(v == "ok" for v in rr.values())
+                    errors += [f"{_CHANNEL_NAMES[k]}: {v}" for k, v in rr.items() if v != "ok"]
+                if ok:
                     ok_items.append(it)
-                else:
-                    _reminder_state["error"] = res["error"]
-                    break
+        _reminder_state["error"] = "; ".join(dict.fromkeys(errors))[:400]
         stamp = datetime.now(timezone.utc).isoformat()
         for it in ok_items:
             for k in it["covers"]:
                 await db.reminder_log.update_one({"key": k}, {"$set": {"key": k, "sent_at": stamp,
                                                   "event_date": it["event_date"]}}, upsert=True)
-            sent += 1
             _reminder_state["last_sent"] = ([{"title": it["title"], "text": it["lines"][0],
                                               "at": now.strftime("%Y-%m-%d %H:%M")}]
                                             + _reminder_state["last_sent"])[:5]
         if ok_items:
-            _reminder_state["error"] = ""
-            # limpiar registros de eventos ya pasados
             await db.reminder_log.delete_many({"event_date": {"$lt": (now.date() - timedelta(days=1)).isoformat()}})
             if _using_embedded:
                 asyncio.create_task(_save_embedded_data())
-        return {"sent": sent, "due": len(pending)}
+        return {"sent": len(ok_items), "due": len(pending)}
 
 
 def _aware_iso(at: datetime, settings: dict) -> str:
@@ -5592,6 +5704,7 @@ async def desktop_notifications_status():
         "last_sent": _reminder_state["last_sent"],
         "error": _reminder_state["error"],
         "scheduled_in_windows": _reminder_state["scheduled"] if sys.platform == "win32" else 0,
+        "channels": _remote_channels(settings),
         "next": nxt,
     }
 
@@ -5607,33 +5720,35 @@ async def desktop_notifications_test():
     return {"ok": True, "message": "Notificación enviada. Debe aparecer en la esquina de la pantalla."}
 
 
-@api_router.post("/notifications/desktop/next")
-async def desktop_notifications_next():
-    """Avisa ahora mismo del próximo evento (sin esperar a la hora configurada)."""
-    settings = await db.app_settings.find_one({}, {"_id": 0}) or {}
+async def _next_event_message(settings: dict):
+    """(título, líneas) del próximo evento, o None si no hay."""
     now = _reminder_now(settings)
     docs = await db.reservations.find(
         {"event_date": {"$gte": now.date().isoformat()}, **_ACTIVE_FILTER},
         {"client_name": 1, "event_type": 1, "event_date": 1, "event_time": 1, "venue": 1}
     ).sort("event_date", 1).to_list(20)
-    nxt = None
     for d in docs:
         et = _parse_hhmm(d.get("event_time"))
         if d.get("event_date") == now.date().isoformat() and et and (et[0], et[1]) <= (now.hour, now.minute):
             continue
-        nxt = d
-        break
-    if not nxt:
+        days_left = (datetime.strptime(d["event_date"][:10], "%Y-%m-%d").date() - now.date()).days
+        place = (d.get("venue") or "").strip()
+        return ("%s · %s" % (d.get("event_type") or "Evento", d.get("client_name") or "Cliente"),
+                [_when_text(days_left, "%02d:%02d" % et if et else "") + (" · " + place if place else ""),
+                 "Próximo evento (%s)" % d["event_date"][:10]])
+    return None
+
+
+@api_router.post("/notifications/desktop/next")
+async def desktop_notifications_next():
+    """Avisa ahora mismo del próximo evento con el pop-up del equipo."""
+    settings = await db.app_settings.find_one({}, {"_id": 0}) or {}
+    msg = await _next_event_message(settings)
+    if not msg:
         res = await asyncio.to_thread(notificador.notify, "Sin eventos próximos",
                                       ["No tienes reservas pendientes."], "proximo", False)
     else:
-        days_left = (datetime.strptime(nxt["event_date"][:10], "%Y-%m-%d").date() - now.date()).days
-        et = _parse_hhmm(nxt.get("event_time"))
-        place = (nxt.get("venue") or "").strip()
-        res = await asyncio.to_thread(
-            notificador.notify, "%s · %s" % (nxt.get("event_type") or "Evento", nxt.get("client_name") or "Cliente"),
-            [_when_text(days_left, "%02d:%02d" % et if et else "") + (" · " + place if place else ""),
-             "Próximo evento (%s)" % nxt["event_date"][:10]], "proximo")
+        res = await asyncio.to_thread(notificador.notify, msg[0], msg[1], "proximo")
     if not res["ok"]:
         raise HTTPException(status_code=500, detail=res["error"] or "No se pudo mostrar la notificación")
     return {"ok": True, "message": "Aviso del próximo evento enviado."}
@@ -5663,7 +5778,7 @@ async def test_email_connection():
         })
         return {"success": True, "message": f"Email de prueba enviado a {settings_doc['admin_email']}"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al enviar: {e}")
+        raise HTTPException(status_code=500, detail="Error al enviar: " + _friendly_channel_error("email", e))
 
 
 @api_router.post("/telegram/test")
@@ -5681,7 +5796,7 @@ async def telegram_test():
             r.raise_for_status()
         return {"ok": True, "message": "Mensaje enviado a Telegram"}
     except Exception as e:
-        return {"ok": False, "error": f"Error de Telegram: {e}"}
+        return {"ok": False, "error": "Error de Telegram: " + _friendly_channel_error("telegram", e)}
 
 
 @api_router.post("/ntfy/test")
@@ -5692,13 +5807,15 @@ async def ntfy_test():
         return {"ok": False, "error": "Configura el tema de ntfy primero"}
     try:
         async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(f"https://ntfy.sh/{doc['ntfy_topic']}",
-                             content="ntfy conectado correctamente.".encode("utf-8"),
-                             headers={"Title": "Cinema Productions — Prueba", "Priority": "high"})
+            # JSON: admite acentos y emojis (en cabeceras HTTP un "—" hacía fallar la prueba)
+            r = await c.post("https://ntfy.sh/", json={
+                "topic": doc["ntfy_topic"].strip(), "title": "Cinema Reservas — Prueba ✓",
+                "message": "Tu celular recibirá aquí los recordatorios de tus eventos.",
+                "priority": 4, "tags": ["bell"]})
             r.raise_for_status()
         return {"ok": True, "message": f"Notificación enviada al tema: {doc['ntfy_topic']}"}
     except Exception as e:
-        return {"ok": False, "error": f"Error de ntfy: {e}"}
+        return {"ok": False, "error": "Error de ntfy: " + _friendly_channel_error("ntfy", e)}
 
 
 # ─── Web Push / Gmail (no disponibles offline → respuestas controladas) ───────

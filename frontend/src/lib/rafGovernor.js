@@ -3,9 +3,9 @@
  *
  * Se importa ANTES que todo lo demás (ver index.jsx): así framer-motion y el resto usan
  * esta versión. Normalmente no cambia nada (60 fps). En "modo quieto" (ventana en segundo
- * plano o sin tocar la app un rato, ver useQuietMode en App.jsx) las animaciones por
- * JavaScript se actualizan 1 vez por segundo en lugar de 60, y vuelven al instante al
- * salir de ese modo. Antes la app hacía ~1.500 cambios de estilo por segundo sin usarla.
+ * plano o minimizada, ver useQuietMode en App.jsx) las animaciones por JavaScript se
+ * CONGELAN (no van a saltos) y siguen al instante al volver. Antes la app hacía ~1.500
+ * cambios de estilo por segundo aunque estuviera detrás de otras ventanas.
  */
 if (typeof window !== "undefined" && window.requestAnimationFrame && !window.__cpRafGovernor) {
   window.__cpRafGovernor = true;
@@ -30,8 +30,7 @@ if (typeof window !== "undefined" && window.requestAnimationFrame && !window.__c
   window.requestAnimationFrame = (cb) => {
     if (!quiet) return nativeRaf(cb);
     const id = nextId++;
-    queue.set(id, cb);
-    if (!flushTimer) flushTimer = setTimeout(flush, 1000);
+    queue.set(id, cb);                                // se ejecuta al salir del modo quieto
     return id;
   };
   window.cancelAnimationFrame = (id) => {
