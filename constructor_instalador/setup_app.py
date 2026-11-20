@@ -29,7 +29,7 @@ from ui_common import (APP_TITLE, Frameless, GradientButton, RoundWinButton, fon
 NO_WINDOW = 0x08000000
 EXE_NAME = "CinemaProductions.exe"
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\CinemaReservas"
-DATA_KEEP = ["cinema_data.json", "backups", "uploads", ".env", "themes", "logs",
+DATA_KEEP = ["cinema_data.json", "ubicacion_datos.json", "backups", "uploads", ".env", "themes", "logs",
              "server_log.txt", "error_log.txt"]
 
 STEPS = [
@@ -192,6 +192,9 @@ class InstallJob:
             self.step(1)
             self._base = 4
             self.log("Copiando el programa (conservando tus datos si ya existian)…")
+            # las pantallas se reemplazan enteras (si no, cada version deja sus archivos
+            # viejos en build\assets); build\ no tiene datos del cliente
+            shutil.rmtree(t / "app" / "build", ignore_errors=True)
             self._extract(pay / "app.zip", t / "app", 22, skip_existing=DATA_KEEP)
             if (pay / "launcher.zip").exists():
                 # lanzador "carpeta" (exe + _lanzador\): abre al instante, sin descomprimirse

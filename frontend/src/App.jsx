@@ -11,7 +11,6 @@ import CalendarView from "@/pages/CalendarView";
 import Settings from "@/pages/Settings";
 import Socios from "@/pages/Socios";
 import Metas from "@/pages/Metas";
-import CatalogoPage from "@/pages/CatalogoPage";
 import DatabasePage from "@/pages/DatabasePage";
 import AppearancePage from "@/pages/AppearancePage";
 import UpdatesPage from "@/pages/UpdatesPage";
@@ -70,7 +69,7 @@ function AnimatedRoutes() {
           <Route path="/ajustes" element={<Settings />} />
           <Route path="/socios" element={<Socios />} />
           <Route path="/metas" element={<Metas />} />
-          <Route path="/catalogo" element={<CatalogoPage />} />
+          <Route path="/catalogo" element={<Navigate to="/dashboard" replace />} />
           <Route path="/base-de-datos" element={<DatabasePage />} />
           <Route path="/apariencia" element={<AppearancePage />} />
           <Route path="/actualizaciones" element={<UpdatesPage />} />
@@ -82,8 +81,71 @@ function AnimatedRoutes() {
   );
 }
 
+/**
+ * Ahorro de energía y fluidez (Windows y Mac): si la ventana está en segundo plano o
+ * nadie la toca durante 20 s, se pausan las animaciones decorativas (CSS y de framer-motion).
+ * Vuelven al instante con el ratón, el teclado o al volver a la ventana. Antes la app
+ * gastaba más de un núcleo de CPU/GPU solo por tenerla abierta sin usarla.
+ */
+function useQuietMode() {
+  useEffect(() => {
+    const root = document.documentElement;
+    const IDLE_MS = 20000;
+    let quiet = false, idleTimer = null, repauseTimer = null, lastWake = 0;
+    let paused = [];
+    const pauseScripted = () => {
+      try {
+        for (const a of document.getAnimations()) {
+          // las animaciones CSS ya las pausa la clase cp-quiet; aquí las de framer-motion (WAAPI)
+          if (a.playState === "running" && !(window.CSSAnimation && a instanceof window.CSSAnimation)
+              && !(window.CSSTransition && a instanceof window.CSSTransition)) {
+            a.pause(); paused.push(a);
+          }
+        }
+      } catch { /* ignore */ }
+    };
+    const setQuiet = (q) => {
+      if (q === quiet) return;
+      quiet = q;
+      root.classList.toggle("cp-quiet", q);
+      try { window.__cpSetQuiet?.(q); } catch { /* ignore */ }
+      if (q) {
+        pauseScripted();
+        repauseTimer = setInterval(pauseScripted, 4000);    // las que se creen mientras tanto
+      } else {
+        clearInterval(repauseTimer);
+        for (const a of paused) { try { if (a.playState === "paused") a.play(); } catch { /* ignore */ } }
+        paused = [];
+      }
+    };
+    const wake = () => {
+      const now = Date.now();
+      if (!quiet && now - lastWake < 300) return;          // el ratón dispara mucho: basta cada 300 ms
+      lastWake = now;
+      setQuiet(false);
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => setQuiet(true), IDLE_MS);
+    };
+    const sleep = () => { clearTimeout(idleTimer); setQuiet(true); };
+    const onVisibility = () => (document.hidden ? sleep() : wake());
+    const evs = ["mousemove", "mousedown", "keydown", "wheel", "touchstart", "focus"];
+    evs.forEach((e) => window.addEventListener(e, wake, { passive: true, capture: true }));
+    window.addEventListener("blur", sleep);
+    document.addEventListener("visibilitychange", onVisibility);
+    wake();
+    return () => {
+      evs.forEach((e) => window.removeEventListener(e, wake, { capture: true }));
+      window.removeEventListener("blur", sleep);
+      document.removeEventListener("visibilitychange", onVisibility);
+      clearTimeout(idleTimer); clearInterval(repauseTimer);
+      root.classList.remove("cp-quiet");
+    };
+  }, []);
+}
+
 function ProtectedApp() {
   const { animations, appLocked } = useSettings();
+  useQuietMode();
   // Los recordatorios los envía el servidor como pop-ups nativos de Windows/macOS
   // (ver /api/notifications/desktop/*); ya no dependen de los permisos del navegador.
 

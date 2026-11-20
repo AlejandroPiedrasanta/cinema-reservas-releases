@@ -92,24 +92,24 @@ h1, h2, h3, h4, h5, h6 {
 
 .glass-strong {
   background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(40px) saturate(200%);
-  -webkit-backdrop-filter: blur(40px) saturate(200%);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
   border: 1px solid rgba(255, 255, 255, 0.75);
   box-shadow: 0 16px 48px 0 rgba(31, 38, 135, 0.10), 0 1px 0 rgba(255,255,255,0.9) inset;
 }
 
 .glass-modal {
   background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(60px) saturate(200%);
-  -webkit-backdrop-filter: blur(60px) saturate(200%);
+  backdrop-filter: blur(32px) saturate(200%);
+  -webkit-backdrop-filter: blur(32px) saturate(200%);
   border: 1px solid rgba(255, 255, 255, 0.8);
   box-shadow: 0 24px 64px 0 rgba(31, 38, 135, 0.15), 0 1px 0 rgba(255,255,255,0.95) inset;
 }
 
 .glass-sidebar {
   background: rgba(255, 255, 255, 0.60);
-  backdrop-filter: blur(40px) saturate(180%);
-  -webkit-backdrop-filter: blur(40px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   border-right: 1px solid rgba(255, 255, 255, 0.70);
   box-shadow: 4px 0 24px 0 rgba(31, 38, 135, 0.06);
 }
@@ -164,37 +164,36 @@ h1, h2, h3, h4, h5, h6 {
   pointer-events: none;
 }
 
+/* Fondo: manchas de color suaves. Rendimiento: degradado radial (sin filter: blur) y
+   quietas — antes eran círculos de 600px con blur(100px) moviéndose sin parar detrás de
+   todas las tarjetas de cristal, lo que obligaba a redibujar el desenfoque en cada frame. */
 .blob {
   position: absolute;
   border-radius: 9999px;
-  filter: blur(100px);
-  opacity: 0.38;
-  animation: float 8s ease-in-out infinite;
+  opacity: 0.5;
+  background: radial-gradient(circle at center, var(--blob-c) 0%, transparent 68%) !important;
+  pointer-events: none;
 }
 
 .blob-1 {
-  width: 600px; height: 600px;
-  background: var(--blob-1);
-  top: -15%; left: -10%;
-  animation-delay: 0s;
+  --blob-c: var(--blob-1);
+  width: 900px; height: 900px;
+  top: -30%; left: -22%;
 }
 .blob-2 {
-  width: 500px; height: 500px;
-  background: var(--blob-2);
-  top: 30%; right: -10%;
-  animation-delay: -3s;
+  --blob-c: var(--blob-2);
+  width: 780px; height: 780px;
+  top: 18%; right: -22%;
 }
 .blob-3 {
-  width: 450px; height: 450px;
-  background: var(--blob-3);
-  bottom: -10%; left: 20%;
-  animation-delay: -6s;
+  --blob-c: var(--blob-3);
+  width: 720px; height: 720px;
+  bottom: -26%; left: 10%;
 }
 .blob-4 {
-  width: 350px; height: 350px;
-  background: var(--blob-4);
-  top: 60%; left: 55%;
-  animation-delay: -2s;
+  --blob-c: var(--blob-4);
+  width: 560px; height: 560px;
+  top: 50%; left: 48%;
 }
 
 @keyframes float {
@@ -438,8 +437,8 @@ body { background-color: var(--body-bg) !important; }
    BACKGROUND INTENSITY
 ═══════════════════════════════════════════ */
 [data-bg="off"]    .blob { opacity: 0 !important; }
-[data-bg="subtle"] .blob { opacity: 0.15 !important; filter: blur(120px) !important; }
-[data-bg="vivid"]  .blob { opacity: 0.55 !important; filter: blur(80px)  !important; }
+[data-bg="subtle"] .blob { opacity: 0.22 !important; }
+[data-bg="vivid"]  .blob { opacity: 0.72 !important; }
 
 /* ═══════════════════════════════════════════
    SIDEBAR COMPACT MODE
@@ -1697,11 +1696,13 @@ body.app-blur-unfocus::after {
   position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;
 }
 .sidebar-aurora .orb {
-  position: absolute; border-radius: 9999px; filter: blur(44px); opacity: 0.30; will-change: transform;
+  /* degradado radial en vez de filter: blur (mismo aspecto, mucho menos trabajo para la tarjeta grafica) */
+  position: absolute; border-radius: 9999px; opacity: 0.38; will-change: transform;
+  background: radial-gradient(circle at center, var(--orb-c) 0%, transparent 68%);
 }
-.sidebar-aurora .orb-1 { width: 190px; height: 190px; top: -50px; left: -50px; background: var(--t-from, #8b5cf6); animation: sbFloat1 15s ease-in-out infinite; }
-.sidebar-aurora .orb-2 { width: 170px; height: 170px; bottom: 90px; right: -60px; background: var(--t-to, #ec4899); animation: sbFloat2 19s ease-in-out infinite; }
-.sidebar-aurora .orb-3 { width: 150px; height: 150px; top: 44%; left: -40px; background: #06b6d4; animation: sbFloat1 22s ease-in-out infinite reverse; }
+.sidebar-aurora .orb-1 { --orb-c: var(--t-from, #8b5cf6); width: 280px; height: 280px; top: -95px; left: -95px; animation: sbFloat1 15s ease-in-out infinite; }
+.sidebar-aurora .orb-2 { --orb-c: var(--t-to, #ec4899); width: 250px; height: 250px; bottom: 50px; right: -100px; animation: sbFloat2 19s ease-in-out infinite; }
+.sidebar-aurora .orb-3 { --orb-c: #06b6d4; width: 220px; height: 220px; top: 40%; left: -75px; animation: sbFloat1 22s ease-in-out infinite reverse; }
 @keyframes sbFloat1 {
   0%   { transform: translate(0,0) scale(1); }
   50%  { transform: translate(28px, 40px) scale(1.18); }
@@ -2082,3 +2083,10 @@ body.app-blur-unfocus::after {
 .catalog-strip::-webkit-scrollbar-track { background: transparent; }
 .catalog-strip::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.35); border-radius: 999px; }
 .catalog-strip::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,0.55); }
+
+
+/* ── Ahorro de energía: sin uso (ventana en segundo plano o 20 s sin tocar nada) se pausan
+   las animaciones decorativas; vuelven al instante al mover el ratón o volver a la app. ── */
+html.cp-quiet *, html.cp-quiet *::before, html.cp-quiet *::after {
+  animation-play-state: paused !important;
+}

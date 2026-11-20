@@ -1,3 +1,5 @@
+// Debe ir primero: regula el reloj de animación (ahorro de energía con la app sin usar)
+import "@/lib/rafGovernor";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "@/index.css";

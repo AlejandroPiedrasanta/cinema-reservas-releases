@@ -59,12 +59,29 @@ load_dotenv(ROOT_DIR / '.env')
 
 DB_NAME = os.environ.get('DB_NAME', 'cinema_productions')
 MONGO_URL = os.environ.get('MONGO_URL', 'embedded')
-DATA_FILE = ROOT_DIR / 'cinema_data.json'
 CUSTOM_DB_FILE = ROOT_DIR / '.db_override'
 # Cuando app.py está dentro de "_sistema (NO TOCAR)/", los backups deben quedar
 # VISIBLES en el directorio superior (la carpeta raíz de la app de escritorio).
 _VISIBLE_ROOT = ROOT_DIR.parent if ROOT_DIR.name.startswith('_sistema') else ROOT_DIR
-BACKUP_DIR = _VISIBLE_ROOT / 'backups'
+
+# Carpeta de datos elegida por el cliente (Base de Datos > "¿Dónde guardamos tus datos?").
+# Por defecto, la carpeta del programa. Se recuerda en ubicacion_datos.json.
+DATA_LOCATION_FILE = ROOT_DIR / 'ubicacion_datos.json'
+
+
+def _read_data_dir() -> Path:
+    try:
+        d = Path(json.loads(DATA_LOCATION_FILE.read_text(encoding='utf-8')).get('dir') or '')
+        if d.is_absolute() and d.is_dir():
+            return d
+    except Exception:
+        pass
+    return _VISIBLE_ROOT
+
+
+DATA_DIR = _read_data_dir()
+DATA_FILE = DATA_DIR / 'cinema_data.json'
+BACKUP_DIR = DATA_DIR / 'backups'
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 UPDATES_DIR = ROOT_DIR / 'uploads' / 'updates'
 UPDATES_DIR.mkdir(parents=True, exist_ok=True)
@@ -248,6 +265,20 @@ async def _load_embedded_data():
 
 
 def _write_data_atomic(text: str) -> None:
+    # Red de seguridad: si el archivo actual es grande y lo nuevo mucho mas chico (p. ej. se
+    # arranco sin poder leer los datos), se guarda antes una copia fechada (max. 5).
+    try:
+        if DATA_FILE.exists():
+            old_size = DATA_FILE.stat().st_size
+            if old_size > 50_000 and len(text.encode('utf-8')) < old_size * 0.3:
+                import shutil as _sh
+                copia = DATA_FILE.with_name("cinema_data.copia-%s.json" % datetime.now().strftime("%Y%m%d-%H%M%S"))
+                _sh.copy2(DATA_FILE, copia)
+                logger.warning(f"Los datos bajaron de {old_size} a {len(text)} bytes: copia de seguridad en {copia.name}")
+                for viejo in sorted(DATA_FILE.parent.glob("cinema_data.copia-*.json"))[:-5]:
+                    viejo.unlink(missing_ok=True)
+    except Exception as e:
+        logger.error(f"No se pudo hacer la copia de seguridad previa: {e}")
     tmp = DATA_FILE.with_name(DATA_FILE.name + '.tmp')
     with open(tmp, 'w', encoding='utf-8') as f:
         f.write(text)
@@ -465,6 +496,9 @@ async def lifespan(app_instance: FastAPI):
 
     # ── Recordatorios con notificación emergente del sistema ─────────────────
     _rem_task = asyncio.create_task(_reminder_loop())
+
+    # ── Copia de seguridad automática diaria (en la carpeta de datosackups) ─
+    asyncio.create_task(_daily_auto_backup())
 
     yield
     _rem_task.cancel()
@@ -1362,16 +1396,32 @@ async def _all_collections() -> list:
     return [n for n in names if not n.startswith("system.")] or list(BACKUP_COLLECTIONS)
 
 
-async def _create_backup(label: str = "manual") -> dict:
+def _backup_doc(doc: dict) -> dict:
+    """Documento tal cual para el respaldo: el _id va aparte como texto y los demás campos
+    (incluido un "id" propio, p. ej. el de las metas) no se tocan."""
+    d = {k: v for k, v in doc.items() if k != '_id'}
+    if '_id' in doc:
+        d['_id'] = str(doc['_id'])
+    return d
+
+
+async def _backup_payload(label: str) -> dict:
     names = await _all_collections()
-    backup_data: dict = {"_meta": {"created_at": datetime.now(timezone.utc).isoformat(), "label": label, "collections": names}}
+    data: dict = {"_meta": {"created_at": datetime.now(timezone.utc).isoformat(), "label": label,
+                            "app": "Cinema Reservas", "version": _local_version, "collections": names}}
     for cname in names:
         docs = await db[cname].find({}).to_list(None)
-        backup_data[cname] = [doc_to_dict(d) for d in docs]
+        data[cname] = [_backup_doc(d) for d in docs]
+    data["_meta"]["counts"] = {c: len(v) for c, v in data.items() if c != "_meta"}
+    return data
+
+
+async def _create_backup(label: str = "manual") -> dict:
+    backup_data = await _backup_payload(label)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"backup_{label}_{ts}.json"
     filepath = BACKUP_DIR / filename
-    filepath.write_text(json.dumps(backup_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    filepath.write_text(json.dumps(backup_data, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
     # Keep only last 15 backups
     existing = sorted(BACKUP_DIR.glob("backup_*.json"), key=lambda f: f.stat().st_mtime)
     for old in existing[:-15]:
@@ -1380,18 +1430,31 @@ async def _create_backup(label: str = "manual") -> dict:
     return {"filename": filename, "docs": total_docs}
 
 
+async def _daily_auto_backup():
+    """Una copia automática al día (la primera vez que se abre la app ese día), si hay datos."""
+    try:
+        await asyncio.sleep(20)                      # no estorbar el arranque
+        today = datetime.now(timezone.utc).strftime("%Y%m%d")
+        if any(BACKUP_DIR.glob(f"backup_auto_{today}_*.json")):
+            return
+        n = await db.reservations.count_documents({}) + await db.socios.count_documents({})
+        if n == 0:
+            return
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        r = await _create_backup("auto")
+        logger.warning(f"Copia automática diaria: {r['filename']} ({r['docs']} registros)")
+    except Exception as e:
+        logger.error(f"Copia automática diaria falló: {e}")
+
+
 # ─── Backup endpoints ──────────────────────────────────────
 
 @api_router.get("/backup/download")
 async def download_full_backup():
-    names = await _all_collections()
-    backup_data: dict = {"_meta": {"created_at": datetime.now(timezone.utc).isoformat(), "app": "Cinema Productions", "collections": names}}
-    for cname in names:
-        docs = await db[cname].find({}).to_list(None)
-        backup_data[cname] = [doc_to_dict(d) for d in docs]
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename = f"cinema_backup_{ts}.json"
-    content = json.dumps(backup_data, ensure_ascii=False, indent=2)
+    backup_data = await _backup_payload("descarga")
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+    filename = f"CinemaReservas_copia_{ts}.json"
+    content = json.dumps(backup_data, ensure_ascii=False, indent=1, default=str)
     return Response(
         content=content.encode("utf-8"),
         media_type="application/json",
@@ -1417,10 +1480,23 @@ async def list_backups():
         size_kb = stat.st_size / 1024
         size_str = f"{size_kb:.0f} KB" if size_kb < 1024 else f"{size_kb / 1024:.1f} MB"
         label = "auto" if "auto_" in f.name else "manual"
+        kind = ("antes_restaurar" if "pre_restore" in f.name else "antes_borrar" if "pre_delete" in f.name
+                else "automatica" if "auto_" in f.name else "manual")
+        counts = {}
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            counts = (data.get("_meta") or {}).get("counts") or {
+                c: len(v) for c, v in data.items() if c != "_meta" and isinstance(v, list)}
+        except Exception:
+            kind = "danada"
         result.append({
             "filename": f.name,
             "size": size_str,
             "label": label,
+            "kind": kind,
+            "reservations": counts.get("reservations", 0),
+            "socios": counts.get("socios", 0),
+            "metas": counts.get("metas", 0),
             "created_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
         })
     return result
@@ -1451,49 +1527,113 @@ async def delete_backup_file(filename: str):
     return {"success": True, "message": "Respaldo eliminado"}
 
 
-@api_router.post("/backup/restore")
-async def restore_backup(file: UploadFile = File(...)):
-    if not file.filename.endswith(".json"):
-        raise HTTPException(status_code=400, detail="El archivo debe ser .json")
-    try:
-        content = await file.read()
-        backup_data = json.loads(content)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Archivo JSON inválido o corrupto")
+async def _restore_from_data(backup_data) -> dict:
+    if not isinstance(backup_data, dict) or not any(
+            isinstance(v, list) for k, v in backup_data.items() if k != "_meta"):
+        raise HTTPException(status_code=400, detail="Ese archivo no es una copia de seguridad de Cinema Reservas.")
+    # antes de tocar nada: copia de lo que hay ahora (para poder deshacer)
     try:
         await _create_backup(label="auto_pre_restore")
-    except Exception:
-        pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo guardar una copia previa; no se restauró nada: {e}")
+    # preparar TODO primero; si algo está mal no se borra nada
+    prepared: dict = {}
+    for cname, docs in backup_data.items():
+        if cname == "_meta" or not isinstance(docs, list) or cname.startswith("system."):
+            continue
+        clean_docs = []
+        for d in docs:
+            if not isinstance(d, dict):
+                continue
+            d = dict(d)
+            raw_id = d.pop("_id", None)
+            if isinstance(raw_id, dict):                      # {"$oid": "..."}
+                raw_id = raw_id.get("$oid")
+            if raw_id is None and isinstance(d.get("id"), str) and ObjectId.is_valid(d["id"]):
+                raw_id = d.pop("id")                          # formato antiguo: el _id venía como "id"
+            # conservar el mismo ID: las reservas guardan el ID de sus socios asignados
+            if isinstance(raw_id, str) and ObjectId.is_valid(raw_id):
+                d["_id"] = ObjectId(raw_id)
+            clean_docs.append(d)
+        prepared[cname] = clean_docs
     restored: dict = {}
-    errors: list = []
+    for cname, clean_docs in prepared.items():
+        await db[cname].delete_many({})
+        if clean_docs:
+            await db[cname].insert_many(clean_docs)
+        restored[cname] = len(clean_docs)
+    if _using_embedded:
+        await _save_embedded_data()
+    total = sum(restored.values())
+    return {"success": True, "restored": restored, "total": total,
+            "reservations": restored.get("reservations", 0), "socios": restored.get("socios", 0),
+            "message": f"Copia restaurada: {restored.get('reservations', 0)} reservas y "
+                       f"{restored.get('socios', 0)} socios."}
+
+
+_COL_NAMES_ES = {"reservations": "Reservas", "socios": "Socios", "metas": "Metas", "app_settings": "Ajustes",
+                 "saved_themes": "Temas", "reminder_log": "Avisos enviados", "reminder_sched": "Avisos programados"}
+
+
+async def _preview_from_data(backup_data, size_bytes: int = 0) -> dict:
+    if not isinstance(backup_data, dict) or not any(
+            isinstance(v, list) for k, v in backup_data.items() if k != "_meta"):
+        raise HTTPException(status_code=400, detail="Ese archivo no es una copia de seguridad de Cinema Reservas.")
+    diff = []
     for cname, docs in backup_data.items():
         if cname == "_meta" or not isinstance(docs, list):
             continue
-        try:
-            clean_docs = []
-            for d in docs:
-                if not isinstance(d, dict):
-                    continue
-                old_id = d.pop("id", None)
-                d.pop("_id", None)
-                # conservar el mismo ID: las reservas guardan el ID de sus socios asignados,
-                # y al pasar los datos a otra base (p. ej. el NAS) los enlaces deben seguir valiendo
-                if isinstance(old_id, str) and ObjectId.is_valid(old_id):
-                    d["_id"] = ObjectId(old_id)
-                clean_docs.append(d)
-            await db[cname].delete_many({})
-            if clean_docs:
-                await db[cname].insert_many(clean_docs)
-            restored[cname] = len(clean_docs)
-        except Exception as e:
-            errors.append(f"{cname}: {e}")
-    if errors:
-        raise HTTPException(status_code=500, detail="Errores al restaurar: " + " | ".join(errors))
-    if _using_embedded:
-        asyncio.create_task(_save_embedded_data())
-    total = sum(restored.values())
-    return {"success": True, "restored": restored, "total": total,
-            "message": f"Restaurado correctamente: {total} documentos en {len(restored)} colecciones"}
+        cur = await db[cname].count_documents({})
+        diff.append({"collection": _COL_NAMES_ES.get(cname, cname), "key": cname,
+                     "current_count": cur, "backup_count": len(docs), "delta": len(docs) - cur})
+    order = list(_COL_NAMES_ES)
+    diff.sort(key=lambda d: order.index(d["key"]) if d["key"] in order else 99)
+    kb = size_bytes / 1024
+    meta = backup_data.get("_meta") or {}
+    return {"size": (f"{kb:.0f} KB" if kb < 1024 else f"{kb/1024:.1f} MB") if size_bytes else "",
+            "created_at": meta.get("created_at", ""),
+            "total_current_docs": sum(d["current_count"] for d in diff),
+            "total_backup_docs": sum(d["backup_count"] for d in diff),
+            "collections_count": len(diff), "diff": diff,
+            "reservations": next((d["backup_count"] for d in diff if d["key"] == "reservations"), 0),
+            "socios": next((d["backup_count"] for d in diff if d["key"] == "socios"), 0)}
+
+
+@api_router.post("/backup/preview")
+async def preview_backup(file: UploadFile = File(...)):
+    """Qué traería una copia (para confirmar antes de restaurar). No cambia nada."""
+    raw = await file.read()
+    try:
+        backup_data = json.loads(raw)
+    except Exception:
+        raise HTTPException(status_code=400, detail="El archivo está dañado o no es una copia de seguridad.")
+    return await _preview_from_data(backup_data, len(raw))
+
+
+@api_router.post("/backup/restore")
+async def restore_backup(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith(".json"):
+        raise HTTPException(status_code=400, detail="Elige un archivo de copia de seguridad (.json).")
+    try:
+        backup_data = json.loads(await file.read())
+    except Exception:
+        raise HTTPException(status_code=400, detail="El archivo está dañado o no es una copia de seguridad.")
+    return await _restore_from_data(backup_data)
+
+
+@api_router.post("/backup/{filename}/restore")
+async def restore_backup_file(filename: str):
+    """Restaura una de las copias guardadas en este equipo (carpeta de datos > backups)."""
+    if not filename.endswith(".json") or "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
+    filepath = BACKUP_DIR / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Esa copia ya no existe")
+    try:
+        backup_data = json.loads(filepath.read_text(encoding="utf-8"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Esa copia está dañada.")
+    return await _restore_from_data(backup_data)
 
 
 @api_router.get("/settings/database/stats-detailed")
@@ -3704,7 +3844,7 @@ async def apply_update_and_restart(payload: dict = Body(default={})):
         src_root = extract_dir
 
     # 7) Copiar archivos NO destructivamente (preserva backups, data locales, .env con datos del usuario)
-    preserve = {".env", "cinema_data.json", "backups", "uploads"}
+    preserve = {".env", "cinema_data.json", "ubicacion_datos.json", "backups", "uploads"}
     copied = 0
     for item in src_root.rglob("*"):
         if not item.is_file():
@@ -3913,11 +4053,12 @@ async def _managed_history() -> list:
             "channel": "stable", "file_size": (mine or {}).get("size", 0),
             "created_at": rel.get("published_at") or rel.get("created_at") or "",
             "is_latest": v == _local_version, "source": "release", "url": rel.get("html_url", ""),
+            "body": (rel.get("body") or "")[:4000],            # novedades de esa versión (texto)
         })
     if not any(r["is_latest"] for r in out):
         out.append({"id": "local", "version": _local_version, "filename": "", "notes": "Instalada en este equipo",
                     "channel": "stable", "file_size": 0, "created_at": "", "is_latest": True,
-                    "source": "release", "url": ""})
+                    "source": "release", "url": "", "body": ""})
     out.sort(key=lambda r: _version_tuple(r["version"]), reverse=True)
     return out
 
@@ -4309,7 +4450,7 @@ async def apply_github_update(payload: dict = Body(default={})):
         #   install_dir/<archivos raíz>
         # El repo es ANIDADO (backend/, frontend/), así que hay que REMAPEAR,
         # no copiar tal cual (ese era el bug: caía en frontend/build y backend/).
-        preserve = {".env", "cinema_data.json", "cinema_data.json.bak", "backups", "uploads", ".db_override"}
+        preserve = {".env", "cinema_data.json", "ubicacion_datos.json", "cinema_data.json.bak", "backups", "uploads", ".db_override"}
         copied = 0
         skipped_preserve = 0
 
@@ -5260,6 +5401,157 @@ async def _reminder_loop():
             _reminder_state["error"] = str(e)[:300]
             logger.warning(f"Recordatorios: {e}")
         await asyncio.sleep(30)
+
+
+# ─── Ubicación de los datos (carpeta elegida por el cliente) ──────────────────
+def _dir_info(d: Path) -> dict:
+    f = d / 'cinema_data.json'
+    info = {"exists": f.exists(), "size": 0, "modified": ""}
+    if f.exists():
+        st = f.stat()
+        info.update(size=st.st_size, modified=datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M"))
+    return info
+
+
+@api_router.get("/storage/location")
+async def storage_location():
+    return {
+        "dir": str(DATA_DIR), "default_dir": str(_VISIBLE_ROOT),
+        "is_default": DATA_DIR.resolve() == _VISIBLE_ROOT.resolve(),
+        "data_file": str(DATA_FILE), "backups_dir": str(BACKUP_DIR),
+        "local_db_in_use": bool(_using_embedded), **_dir_info(DATA_DIR),
+    }
+
+
+def _pick_folder_dialog(start: str) -> str:
+    """Selector de carpeta del sistema (lo abre el servidor: corre en este mismo equipo)."""
+    if sys.platform == "win32":
+        ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+              "[System.Windows.Forms.Application]::EnableVisualStyles();"
+              "$o=New-Object System.Windows.Forms.Form -Property @{TopMost=$true;ShowInTaskbar=$false;"
+              "StartPosition='CenterScreen';Width=1;Height=1;Opacity=0};$o.Show();$o.Activate();"
+              "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
+              "$d.Description='Elige la carpeta donde Cinema Reservas guardara tus datos';"
+              "$d.ShowNewFolderButton=$true;$d.SelectedPath=$env:CP_START;"
+              "if($d.ShowDialog($o) -eq 'OK'){[Console]::Out.WriteLine('SEL:'+$d.SelectedPath)};$o.Close()")
+        exe = os.path.join(os.environ.get("SystemRoot", r"C:\\Windows"), r"System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+        env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+        env["CP_START"] = start
+        r = subprocess.run([exe, "-NoProfile", "-STA", "-NonInteractive", "-Command", ps], capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=900, env=env,
+                           creationflags=0x08000000)
+        for line in (r.stdout or "").splitlines():
+            if line.startswith("SEL:"):
+                return line[4:].strip()
+        return ""
+    if sys.platform == "darwin":
+        r = subprocess.run(["osascript", "-e", 'POSIX path of (choose folder with prompt '
+                            '"Elige la carpeta donde Cinema Reservas guardará tus datos")'],
+                           capture_output=True, text=True, timeout=900)
+        return (r.stdout or "").strip().rstrip("/")
+    return ""
+
+
+@api_router.post("/storage/choose-folder")
+async def storage_choose_folder():
+    path = await asyncio.to_thread(_pick_folder_dialog, str(DATA_DIR))
+    if not path:
+        return {"cancelled": True}
+    return {"cancelled": False, "dir": path, **_dir_info(Path(path))}
+
+
+@api_router.post("/storage/open-folder")
+async def storage_open_folder():
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(DATA_DIR))
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(DATA_DIR)])
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo abrir la carpeta: {e}")
+
+
+@api_router.post("/storage/location")
+async def storage_set_location(payload: dict = Body(...)):
+    """Cambia la carpeta de datos. mode: (vacío) pregunta si ya hay datos allí,
+    "replace" lleva tus datos actuales, "use_existing" abre los datos que ya hay allí.
+    Nunca borra nada: la copia anterior queda en la carpeta vieja."""
+    global DATA_DIR, DATA_FILE, DATA_BAK, BACKUP_DIR
+    import shutil
+    raw = str(payload.get("dir") or "").strip()
+    mode = str(payload.get("mode") or "").strip()
+    target = Path(raw) if raw else _VISIBLE_ROOT
+    if not target.is_absolute():
+        raise HTTPException(status_code=400, detail="Elige una carpeta completa (por ejemplo D:\\Mis datos).")
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        probe = target / ".prueba_escritura"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except Exception:
+        raise HTTPException(status_code=400, detail="No se puede escribir en esa carpeta. Elige otra o revisa los permisos.")
+    if target.resolve() == DATA_DIR.resolve():
+        return {"ok": True, "changed": False, "dir": str(DATA_DIR)}
+    new_file = target / 'cinema_data.json'
+    if new_file.exists() and mode not in ("replace", "use_existing"):
+        return {"ok": False, "needs_choice": True, "dir": str(target), **_dir_info(target)}
+
+    async with _save_lock:
+        old_dir, old_backups = DATA_DIR, BACKUP_DIR
+        if mode == "use_existing" and new_file.exists():
+            try:
+                _read_data_file(new_file)            # que sea un archivo valido antes de cambiar
+            except Exception:
+                raise HTTPException(status_code=400, detail="El archivo de datos de esa carpeta está dañado.")
+        else:
+            # tus datos actuales, completos y al día, al archivo nuevo
+            if _using_embedded:
+                data = {}
+                for col_name in EMBEDDED_COLLECTIONS:
+                    docs = await db[col_name].find({}).to_list(None)
+                    data[col_name] = [_serialize_doc(d) for d in docs]
+                text = json.dumps(data, ensure_ascii=False, indent=1, default=str)
+            elif DATA_FILE.exists():
+                text = DATA_FILE.read_text(encoding="utf-8")
+            else:
+                text = None
+            if text is not None:
+                if new_file.exists():
+                    try:
+                        new_file.replace(new_file.with_name("cinema_data.antes_de_mover.json"))
+                    except Exception:
+                        pass
+                tmp = new_file.with_name("cinema_data.json.tmp")
+                tmp.write_text(text, encoding="utf-8")
+                tmp.replace(new_file)
+        # copias de seguridad: se copian (no se mueven) a la carpeta nueva
+        new_backups = target / 'backups'
+        new_backups.mkdir(parents=True, exist_ok=True)
+        try:
+            for f in old_backups.glob("*.json"):
+                if not (new_backups / f.name).exists():
+                    shutil.copy2(f, new_backups / f.name)
+        except Exception as e:
+            logger.warning(f"No se pudieron copiar todas las copias de seguridad: {e}")
+        DATA_DIR, DATA_FILE, BACKUP_DIR = target, new_file, new_backups
+        DATA_BAK = DATA_FILE.with_name(DATA_FILE.name + '.bak')
+        if target.resolve() == _VISIBLE_ROOT.resolve():
+            DATA_LOCATION_FILE.unlink(missing_ok=True)
+        else:
+            DATA_LOCATION_FILE.write_text(json.dumps({"dir": str(target)}, ensure_ascii=False), encoding="utf-8")
+
+    if mode == "use_existing" and _using_embedded:
+        try:
+            file_cols = set(_read_data_file(DATA_FILE).keys())
+        except Exception:
+            file_cols = set()
+        for col_name in set(EMBEDDED_COLLECTIONS) | file_cols:   # cargar los datos que ya había allí
+            await db[col_name].delete_many({})
+        await _load_embedded_data()
+    logger.warning(f"Carpeta de datos: {old_dir} -> {DATA_DIR}")
+    return {"ok": True, "changed": True, "dir": str(DATA_DIR), "previous_dir": str(old_dir),
+            "reloaded": mode == "use_existing"}
 
 
 @api_router.post("/system/flush")

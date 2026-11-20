@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import UpdatesSimple from "@/components/UpdatesSimple";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Upload, Trash2, Download, Star, RefreshCw, Package,
@@ -90,7 +91,7 @@ export default function UpdatesPage() {
 
   useEffect(() => {
     (async () => {
-      try { setGhConfig(await getGithubConfig()); } catch { /* noop */ }
+      try { setGhConfig(await getGithubConfig()); } catch { setGhConfig((p) => ({ ...p, is_desktop: false })); }
     })();
   }, []);
 
@@ -303,8 +304,33 @@ export default function UpdatesPage() {
 
   const latest = history.find(h => h.is_latest);
   // App instalada con licencia: se actualiza sola desde las versiones publicadas
-  const managed = !!ghConfig?.managed;
+  let forceSimple = false;
+  try { forceSimple = localStorage.getItem("cp_force_simple_updates") === "1"; } catch { /* ignore */ }
+  const managed = !!ghConfig?.managed || forceSimple;
   const newestPublished = managed ? history.find(h => h.created_at) : latest;
+  const cfgLoaded = "is_desktop" in (ghConfig || {});
+
+  // App instalada (con licencia): pantalla simple — estado, un botón y novedades
+  if (!cfgLoaded || managed) {
+    return (
+      <div className="px-6 py-8 max-w-7xl mx-auto">
+        <div className="mb-7 flex items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl btn-primary flex items-center justify-center shadow-lg flex-shrink-0">
+            <Package size={22} className="text-white" strokeWidth={2} />
+          </div>
+          <div>
+            <h1 className="text-5xl font-black gradient-text tracking-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
+              Actualizaciones
+            </h1>
+            <p className="text-sm text-slate-500 font-medium mt-1">Mantén Cinema Reservas al día · tus datos se conservan</p>
+          </div>
+        </div>
+        {cfgLoaded
+          ? <UpdatesSimple localVersion={ghConfig.local_version || latest?.version || ""} />
+          : <div className="h-36 rounded-[28px] glass animate-pulse" />}
+      </div>
+    );
+  }
 
   return (
     <div className="px-6 py-8 max-w-7xl mx-auto">

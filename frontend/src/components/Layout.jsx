@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, CalendarDays, List, Menu, X, SlidersHorizontal, Users, Database, Palette, RefreshCw, ArrowRight, Target, LayoutGrid } from "lucide-react";
+import { LayoutDashboard, CalendarDays, List, Menu, X, SlidersHorizontal, Users, Database, Palette, RefreshCw, ArrowRight, Target } from "lucide-react";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSettings } from "@/context/SettingsContext";
@@ -74,11 +74,16 @@ export default function Layout({ children }) {
       backdropFilter: "none",
     },
     island: {
-      top: `${mTop}px`,
-      bottom: `${mBottom}px`,
+      // La isla mide lo justo para sus botones (sin hueco abajo) y queda centrada en
+      // vertical; si la ventana es baja, se limita a los márgenes y el menú se desplaza.
+      top: `${Math.min(mTop, 16)}px`,
+      bottom: `${Math.min(mBottom, 16)}px`,
       left: `${mSide}px`,
-      height: "auto",
-      minHeight: "auto",
+      height: "fit-content",
+      minHeight: 0,
+      maxHeight: `calc(100vh - ${Math.min(mTop, 16) + Math.min(mBottom, 16)}px)`,
+      marginTop: "auto",
+      marginBottom: "auto",
       borderRadius: `${mRadius}px`,
       boxShadow: "0 32px 80px rgba(31,38,135,0.22), 0 8px 30px rgba(0,0,0,0.1)",
       background: "rgba(255,255,255,0.88)",
@@ -102,7 +107,6 @@ export default function Layout({ children }) {
     "/calendario":      { label: tr.nav.reservations,                icon: CalendarDays,       tile: "linear-gradient(135deg,#34d399,#059669)" },
     "/socios":          { label: tr.nav.socios || "Socios",          icon: Users,              tile: "linear-gradient(135deg,#f472b6,#db2777)" },
     "/metas":           { label: tr.nav.metas || "Metas",            icon: Target,             tile: "linear-gradient(135deg,#fbbf24,#f59e0b)" },
-    "/catalogo":        { label: tr.nav.catalogo || "Catálogo",      icon: LayoutGrid,         tile: "linear-gradient(135deg,#c084fc,#8b5cf6)" },
     "/base-de-datos":   { label: tr.nav.database || "Base de Datos", icon: Database,           tile: "linear-gradient(135deg,#22d3ee,#0891b2)" },
     "/apariencia":      { label: tr.nav.appearance || "Apariencia",  icon: Palette,            tile: "linear-gradient(135deg,#a78bfa,#7c3aed)" },
     "/ajustes":         { label: tr.nav.settings,                    icon: SlidersHorizontal,  tile: "linear-gradient(135deg,#94a3b8,#475569)" },

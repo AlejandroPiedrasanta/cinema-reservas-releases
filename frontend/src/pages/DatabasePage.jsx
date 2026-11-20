@@ -1,4 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
+import DataLocation from "@/components/DataLocation";
+import BackupsSimple from "@/components/BackupsSimple";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -1292,8 +1294,26 @@ export default function DatabasePage() {
 
       <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-6">
 
+        {/* ── ¿Dónde guardamos tus datos? (carpeta elegible) ── */}
+        <motion.div variants={fadeUp}>
+          <DataLocation />
+        </motion.div>
+
+        {/* ── Modo simple: tus datos + copias de seguridad + nube opcional ── */}
+        {!advancedMode && (
+          <motion.div variants={fadeUp}>
+            <BackupsSimple onShowAdvanced={() => {
+              setAdvancedMode(true);
+              try { localStorage.setItem("cp_db_advanced_mode", "true"); } catch {}
+              setOpenBlocks(p => ({ ...p, conn: true }));
+              setTimeout(() => document.querySelector('[data-testid="db-change-connection"]')
+                ?.scrollIntoView({ behavior: "smooth", block: "center" }), 400);
+            }} />
+          </motion.div>
+        )}
+
         {/* ── HERO: UBICACIÓN + ACCIÓN NUBE (unifica banner Atlas duplicado) ── */}
-        <motion.div variants={fadeUp} data-testid="data-location-hero">
+        <motion.div variants={fadeUp} data-testid="data-location-hero" style={{ display: advancedMode ? undefined : "none" }}>
           {(() => {
             const isCloud = !!dbStats?.is_atlas;
             const objects = dbStats?.objects || 0;
@@ -1475,8 +1495,8 @@ export default function DatabasePage() {
           })()}
         </motion.div>
 
-        {/* ── COPIA DE SEGURIDAD (rediseño editorial) ── */}
-        <motion.div variants={fadeUp}>
+        {/* ── COPIA DE SEGURIDAD (rediseño editorial) — detalle técnico: solo en Avanzado ── */}
+        <motion.div variants={fadeUp} style={{ display: advancedMode ? undefined : "none" }}>
           <div className={`relative rounded-[28px] overflow-hidden border transition-all duration-300 bg-white ${autoBackup.config.enabled ? "border-emerald-300 shadow-[0_0_0_4px_rgba(16,185,129,0.08)]" : "border-slate-200/70"}`}>
             {/* Header */}
             <div onClick={() => toggleBlock("conn")} data-testid="db-block-toggle-conn"

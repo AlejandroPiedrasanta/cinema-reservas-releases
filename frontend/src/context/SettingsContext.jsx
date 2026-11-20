@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import { setEventConfigOverrides } from "@/lib/eventConfig";
 import { getCloudAppearance, saveCloudAppearance, getSecurityStatus } from "@/lib/api";
 
-export const NAV_PATHS = ["/dashboard", "/calendario", "/socios", "/metas", "/catalogo", "/base-de-datos", "/apariencia", "/ajustes", "/actualizaciones"];
+export const NAV_PATHS = ["/dashboard", "/calendario", "/socios", "/metas", "/base-de-datos", "/apariencia", "/ajustes", "/actualizaciones"];
 
 export const APPEARANCE_KEYS = [
   "theme", "preset", "animations", "radius", "pdf_theme", "dark_mode", "font_scale", "bg_intensity",

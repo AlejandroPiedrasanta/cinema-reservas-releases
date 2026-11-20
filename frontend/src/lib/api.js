@@ -59,7 +59,9 @@ api.interceptors.response.use(
       const cfg = error?.config || {};
       const url = cfg.url || "";
       const status = error?.response?.status;
-      const isReportCall = url.includes("/errors/report");
+      // consultas que dependen de internet (buscar actualizaciones, GitHub, etc.): si fallan
+      // por la conexión no es un error de la app, no se muestra el aviso rojo de incidencia
+      const isReportCall = url.includes("/errors/report") || /\/(github|updates)\/|\/themes\/sync|update-progress/.test(url);
       const isServerOrNetwork = !error?.response || (status >= 500);
       if (!isReportCall && isServerOrNetwork) {
         const backendIssue = error?.response?.data?.github_issue_url;
@@ -169,6 +171,12 @@ export const getFactoryPresets = () => api.get("/settings/database/factory-prese
 export const sendTestReminder   = () => api.post("/reminders/send").then(r => r.data);
 export const testEmailConnection = () => api.post("/reminders/test-email").then(r => r.data);
 
+// Carpeta donde se guardan los datos (Base de Datos > "¿Dónde guardamos tus datos?")
+export const getDataLocation    = () => api.get("/storage/location").then(r => r.data);
+export const chooseDataFolder   = () => api.post("/storage/choose-folder", null, { timeout: 0 }).then(r => r.data);
+export const setDataLocation    = (dir, mode) => api.post("/storage/location", { dir, mode }).then(r => r.data);
+export const openDataFolder     = () => api.post("/storage/open-folder").then(r => r.data);
+
 // Notifications
 // Pop-ups nativos de Windows/macOS (los muestra el servidor, y Windows los guarda programados)
 export const getDesktopNotifStatus = () => api.get("/notifications/desktop/status").then(r => r.data);
@@ -188,6 +196,8 @@ export const restoreBackup = (file) => {
   form.append("file", file);
   return api.post("/backup/restore", form).then(r => r.data);
 };
+export const restoreBackupFile = (filename) => api.post(`/backup/${encodeURIComponent(filename)}/restore`, null, { timeout: 120000 }).then(r => r.data);
+export const getDataSummary = () => api.get("/settings/database/stats-detailed", { noCache: true }).then(r => r.data);
 export const previewBackup = (file) => {
   const form = new FormData();
   form.append("file", file);
