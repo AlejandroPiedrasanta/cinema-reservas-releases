@@ -16,6 +16,10 @@ on:
       tag:
         description: "Release al que adjuntar los .dmg (p. ej. v1.20.84)"
         required: true
+      adjuntar:
+        description: "Adjuntar los .dmg al release (desmarca para solo probar y sacar capturas)"
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -64,6 +68,23 @@ jobs:
           APP="constructor_instalador_mac/dist/Cinema Reservas.app/Contents/MacOS/CinemaReservas"
           "$APP" --uitest "$RUNNER_TEMP/uitest" 2>&1 | tee "$RUNNER_TEMP/uitest.log"
           test "${PIPESTATUS[0]}" -eq 0
+      - name: Captura del instalador (.dmg abierto en Finder)
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/uitest"
+          DMG=$(ls dmg/*.dmg | head -1)
+          hdiutil attach "$DMG" -noverify -noautoopen >/dev/null
+          VOL="/Volumes/Cinema Reservas"
+          osascript -e 'tell application "Finder" to activate' \
+                    -e "tell application \"Finder\" to open (POSIX file \"$VOL\" as alias)" || open "$VOL"
+          sleep 5
+          screencapture -x "$RUNNER_TEMP/uitest/0-instalador-dmg.png"
+          open -a TextEdit "$VOL/Si no abre - LEEME.txt" && sleep 4 && \
+            screencapture -x "$RUNNER_TEMP/uitest/0b-si-no-abre-leeme.png"
+          osascript -e 'tell application "TextEdit" to quit' || true
+          osascript -e 'tell application "Finder" to close every window' || true
+          hdiutil detach "$VOL" -force >/dev/null || true
       - name: Guardar capturas de la prueba
         if: always()
         uses: actions/upload-artifact@v4
@@ -74,10 +95,12 @@ jobs:
             ${{ runner.temp }}/uitest.log
           retention-days: 14
       - name: Adjuntar al release
+        if: github.event_name == 'release' || inputs.adjuntar
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" dmg/*.dmg --clobber --repo "${{ github.repository }}"
       - name: Prueba de actualizacion automatica (version vieja simulada)
+        if: github.event_name == 'release' || inputs.adjuntar
         run: |
           SRC="constructor_instalador_mac/dist/Cinema Reservas.app"
           DEST="$HOME/Applications/Cinema Reservas.app"
