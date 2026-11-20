@@ -21,3 +21,9 @@ constructor_instalador_mac/dist/
 node_modules/
 *.dmg
 *.exe
+
+# pantallas (frontend)
+frontend/node_modules/
+frontend/build/
+frontend/node_modules.tar.gz
+

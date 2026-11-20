@@ -35,6 +35,19 @@ echo "[1/4] Empaquetando app + servidor + Python (PyInstaller)…"
   launcher_mac.py
 mv "dist/CinemaReservas.app" "dist/$APP"
 
+# Datos de la app para macOS: nombre con espacio en la barra de menus, version real en
+# "Obtener informacion", copyright, categoria y sistema minimo.
+PL="dist/$APP/Contents/Info.plist"
+pset() { /usr/libexec/PlistBuddy -c "Set :$1 $2" "$PL" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :$1 $3 $2" "$PL"; }
+pset CFBundleName "Cinema Reservas" string
+pset CFBundleDisplayName "Cinema Reservas" string
+pset CFBundleShortVersionString "$VER" string
+pset CFBundleVersion "$VER" string
+pset NSHumanReadableCopyright "© $(date +%Y) Cinema Productions" string
+pset LSApplicationCategoryType "public.app-category.business" string
+pset LSMinimumSystemVersion "11.0" string
+pset NSHighResolutionCapable true bool
+
 echo "[2/4] Firmando…"
 if [ -n "${DEVELOPER_ID:-}" ]; then
   codesign --force --deep --options runtime --timestamp --sign "$DEVELOPER_ID" "dist/$APP"

@@ -67,24 +67,57 @@ Copy-Item "$sys\build\logo.png" "$here\ui_web\logo.png" -Force
 $web = @("--add-data", "$here\ui_web\index.html;ui_web", "--add-data", "$here\ui_web\app.css;ui_web",
          "--add-data", "$here\ui_web\logo.png;ui_web")
 
+# Datos de version de los .exe (Propiedades > Detalles; Windows/SmartScreen muestran editor y version)
+$ver = (Get-Content "$sys\version.txt" -Raw).Trim()
+$vt = (($ver -split '\.') + @('0', '0', '0', '0'))[0..3] -join ', '
+function New-VersionFile([string]$path, [string]$desc, [string]$file) {
+    @"
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=($vt), prodvers=($vt), mask=0x3f, flags=0x0, OS=0x40004,
+                    fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('0C0A04B0', [
+      StringStruct('CompanyName', 'Cinema Productions'),
+      StringStruct('FileDescription', '$desc'),
+      StringStruct('FileVersion', '$ver'),
+      StringStruct('InternalName', '$file'),
+      StringStruct('LegalCopyright', '(c) $(Get-Date -Format yyyy) Cinema Productions'),
+      StringStruct('OriginalFilename', '$file'),
+      StringStruct('ProductName', 'Cinema Reservas'),
+      StringStruct('ProductVersion', '$ver')])]),
+    VarFileInfo([VarStruct('Translation', [0x0C0A, 1200])])
+  ]
+)
+"@ | Set-Content $path -Encoding ASCII
+}
+New-VersionFile "$work\ver_launcher.txt" "Cinema Reservas" "CinemaProductions.exe"
+New-VersionFile "$work\ver_setup.txt" "Instalador de Cinema Reservas" "CinemaReservas-$ver-Setup.exe"
+
 # ── 3) launcher (CinemaProductions.exe: licencia + arranque) ──
+# En CARPETA (exe + _lanzador\) y no en un solo archivo: asi no se descomprime en cada
+# arranque y la app abre en menos de un segundo.
 Write-Host "[3/4] Launcher"
 $ex = @("tkinter", "matplotlib", "numpy", "PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick",
         "PySide6.QtWebEngineCore", "PySide6.QtPdf", "PySide6.QtMultimedia", "PySide6.Qt3DCore") |
       ForEach-Object { "--exclude-module", $_ }
-py -m PyInstaller --noconfirm --onefile --windowed --name CinemaProductions --icon "$here\icono.ico" `
+py -m PyInstaller --noconfirm --onedir --contents-directory _lanzador --windowed --name CinemaProductions `
+    --icon "$here\icono.ico" --version-file "$work\ver_launcher.txt" `
     --paths $sys --distpath "$work\dist" --workpath "$work\pi_launcher" --specpath "$work" `
     --add-data "$here\icono.ico;." @web @ex "$here\launcher.py"
 if ($LASTEXITCODE) { throw "PyInstaller (launcher) fallo" }
-Copy-Item "$work\dist\CinemaProductions.exe" "$pay\launcher.exe"
+Compress-Archive "$work\dist\CinemaProductions\*" "$pay\launcher.zip" -CompressionLevel Optimal
 
 # ── 4) instalador ──
+# --splash: imagen que aparece AL INSTANTE mientras el instalador se prepara (antes: 5 s sin nada)
 Write-Host "[4/4] Instalador"
+$exSetup = @("matplotlib", "numpy", "PySide6.QtNetwork", "PySide6.QtQml", "PySide6.QtQuick",   # sin tkinter:
+             "PySide6.QtWebEngineCore", "PySide6.QtPdf", "PySide6.QtMultimedia", "PySide6.Qt3DCore") |  # el splash usa Tcl/Tk
+           ForEach-Object { "--exclude-module", $_ }
 py -m PyInstaller --noconfirm --onefile --windowed --name CinemaReservas-Setup --icon "$here\icono.ico" `
+    --version-file "$work\ver_setup.txt" --splash "$here\splash.png" `
     --distpath "$work\dist" --workpath "$work\pi_setup" --specpath "$work" `
-    --add-data "$pay;payload" --add-data "$here\icono.ico;." --add-data "$here\logo.png;." @web @ex "$here\setup_app.py"
+    --add-data "$pay;payload" --add-data "$here\icono.ico;." --add-data "$here\logo.png;." @web @exSetup "$here\setup_app.py"
 if ($LASTEXITCODE) { throw "PyInstaller (setup) fallo" }
-$ver = (Get-Content "$sys\version.txt" -Raw).Trim()
 $exe = "CinemaReservas-$ver-Setup.exe"
 Get-ChildItem $Out -Filter "CinemaReservas*Setup.exe" | Remove-Item -Force
 Copy-Item "$work\dist\CinemaReservas-Setup.exe" "$Out\$exe" -Force

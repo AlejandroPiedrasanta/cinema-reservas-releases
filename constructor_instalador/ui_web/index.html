@@ -87,6 +87,18 @@ let current = null;
 let S = {};
 
 // ── INSTALADOR ──────────────────────────────────────────────────
+// instalar / actualizar (habia otra version) / reinstalar (la misma version)
+const setupMode = (s) => (!s.installed ? "install" : s.installed === s.version ? "reinstall" : "update");
+const SETUP_TXT = {
+  install:   { verb: "Instalar",   title: "Todo listo para instalar", done: "¡Instalación completa!",
+               desc: "Se instala en tu usuario con Python y todas las librerías incluidas. No pide permisos de administrador." },
+  update:    { verb: "Actualizar", title: "Lista la actualización", done: "¡Actualización completa!",
+               desc: "Se reemplaza el programa por la versión nueva. Tus reservas, socios, respaldos y licencia se conservan." },
+  reinstall: { verb: "Reinstalar", title: "Ya tienes esta versión", done: "¡Reinstalación completa!",
+               desc: "Vuelve a instalar la misma versión (útil si algo se dañó). Tus reservas, socios, respaldos y licencia se conservan." },
+};
+const fmtMB = (mb) => (mb >= 1024 ? (mb / 1024).toFixed(1).replace(".0", "") + " GB" : Math.round(mb) + " MB");
+
 views.setup = {
   crumb: "Instalador",
   phase: "ready", step: -1, pct: 0,
@@ -94,12 +106,13 @@ views.setup = {
   <section class="view-enter flex h-full flex-col px-8 pb-5">
     <div>
       <div class="flex flex-wrap gap-2">
-        <span class="badge text-fg/90">${ic("sparkles", "size-3.5 text-brand")} v${esc(s.version)}</span>
+        <span class="badge text-fg/90">${ic("sparkles", "size-3.5 text-brand")} ${setupMode(s) === "update"
+          ? `v${esc(s.installed)} ${ic("arrow", "size-3")} v${esc(s.version)}` : "v" + esc(s.version)}</span>
         <span class="badge">${ic("shield", "size-3.5")} Sin permisos de administrador</span>
         <span class="badge">${ic("wifiOff", "size-3.5")} No necesita internet</span>
       </div>
       <h1 class="mt-4 font-display text-[40px] leading-[1.05] font-semibold tracking-[-0.035em]">
-        Instalar <span class="text-gradient">Cinema Reservas</span></h1>
+        ${SETUP_TXT[setupMode(s)].verb} <span class="text-gradient">Cinema Reservas</span></h1>
       <p class="mt-2 text-[15px] text-muted">Gestor de reservas de eventos, 100% local en tu PC. Todo incluido.</p>
     </div>
 
@@ -112,16 +125,22 @@ views.setup = {
       <div class="card relative col-span-3 flex min-h-0 flex-col p-6">
         <div id="pane-main" class="flex min-h-0 flex-1 flex-col">
           <div class="flex items-start justify-between gap-4">
-            <h2 id="st-title" class="font-display text-[22px] font-semibold tracking-tight">Todo listo para instalar</h2>
+            <h2 id="st-title" class="font-display text-[22px] font-semibold tracking-tight">${SETUP_TXT[setupMode(s)].title}</h2>
             <span id="st-pct" class="mt-1.5 font-mono text-sm text-muted tabular-nums">0%</span>
           </div>
           <div class="progress mt-4"><div id="st-bar" class="progress-fill is-idle"></div></div>
-          <p id="st-desc" class="mt-4 text-sm leading-relaxed text-muted">
-            Se instala en tu usuario con Python y todas las librerías incluidas. Tus reservas y respaldos
-            se conservan si ya tenías una instalación.</p>
+          <p id="st-desc" class="mt-4 text-sm leading-relaxed text-muted">${SETUP_TXT[setupMode(s)].desc}</p>
           <div id="st-alert" hidden></div>
+          <div id="st-opts" class="mt-5 space-y-2.5">
+            <label class="flex cursor-pointer items-center gap-2.5 text-[13.5px] text-fg/85 select-none">
+              <input id="opt-desktop" type="checkbox" checked class="size-4 cursor-pointer accent-[#a78bfa]">
+              Crear acceso directo en el escritorio</label>
+            <label class="flex cursor-pointer items-center gap-2.5 text-[13.5px] text-fg/85 select-none">
+              <input id="opt-open" type="checkbox" checked class="size-4 cursor-pointer accent-[#a78bfa]">
+              Abrir Cinema Reservas al terminar</label>
+          </div>
           <div class="mt-auto flex items-center gap-2 pt-5">
-            <button id="st-primary" class="btn btn-primary h-11 flex-1 text-[15px]">Instalar ${ic("arrow")}</button>
+            <button id="st-primary" class="btn btn-primary h-11 flex-1 text-[15px]">${SETUP_TXT[setupMode(s)].verb} ${ic("arrow")}</button>
             <button id="st-log-open" class="btn btn-ghost h-11">${ic("terminal")} Detalles</button>
           </div>
         </div>
@@ -137,13 +156,18 @@ views.setup = {
 
     <footer class="mt-4 flex items-center justify-between text-xs text-subtle">
       <span class="flex min-w-0 items-center gap-1.5">${ic("folder", "size-3.5")}<span class="truncate font-mono">${esc(s.path)}</span></span>
-      <span class="shrink-0 pl-4 whitespace-nowrap">Cinema Productions</span>
+      <span class="shrink-0 pl-4 whitespace-nowrap">${s.needMB ? `Ocupa ~${fmtMB(s.needMB)}${s.freeMB ? ` · ${fmtMB(s.freeMB)} libres` : ""} · ` : ""}Cinema Productions</span>
     </footer>
   </section>`,
 
   mount(s) {
     this.steps = s.steps || [];
+    this.mode = setupMode(s);
     this.renderSteps();
+    if (s.freeMB && s.needMB && s.freeMB < s.needMB) {      // sin espacio: avisar antes de empezar
+      setAlert($("#st-alert"), "error", `No hay espacio suficiente: se necesitan ${fmtMB(s.needMB)} y quedan ${fmtMB(s.freeMB)} libres en el disco.`);
+      $("#st-alert").classList.add("mt-4");
+    }
     $("#st-primary").onclick = () => this.primary();
     $("#st-log-open").onclick = () => this.showLog(true);
     $("#st-log-close").onclick = () => this.showLog(false);
@@ -176,8 +200,9 @@ views.setup = {
   primary() {
     if (this.phase === "done") { call("open_app"); return; }
     if (this.phase === "installing") return;
+    this.opts = { desktop: $("#opt-desktop").checked, open: $("#opt-open").checked };
     this.set({ phase: "installing" });
-    call("install");
+    call("install", this.opts);
   },
 
   set(p) {
@@ -198,16 +223,23 @@ views.setup = {
       const btn = $("#st-primary"), bar = $("#st-bar"), title = $("#st-title"), desc = $("#st-desc");
       bar.className = "progress-fill" + (p.phase === "done" ? " is-done" : p.phase === "error" ? " is-error" : "");
       setAlert($("#st-alert"), "", "");
+      document.querySelectorAll("#st-opts input").forEach((x) => (x.disabled = p.phase === "installing" || p.phase === "done"));
       if (p.phase === "installing") {
-        btn.disabled = true; btn.innerHTML = spin() + " Instalando…";
+        btn.disabled = true; btn.innerHTML = spin() + (this.mode === "update" ? " Actualizando…" : " Instalando…");
         title.textContent = "Preparando la instalación…";
         desc.textContent = "No cierres esta ventana. Tarda menos de un minuto.";
         if (this.pct >= 100) this.setPct(0);
       } else if (p.phase === "done") {
         this.setPct(100); this.renderSteps();
-        btn.disabled = false; btn.innerHTML = "Abrir Cinema Reservas " + ic("arrow");
-        title.textContent = "¡Instalación completa!";
-        desc.textContent = "Cinema Reservas ya está en tu escritorio y en el menú Inicio. Al abrirlo por primera vez te pedirá activar tu licencia.";
+        title.textContent = SETUP_TXT[this.mode || "install"].done;
+        const donde = (this.opts && this.opts.desktop === false) ? "en el menú Inicio" : "en tu escritorio y en el menú Inicio";
+        if (p.autoOpen) {
+          btn.disabled = true; btn.innerHTML = spin() + " Abriendo Cinema Reservas…";
+          desc.textContent = `Cinema Reservas ya está ${donde}. Se abre en un momento…`;
+        } else {
+          btn.disabled = false; btn.innerHTML = "Abrir Cinema Reservas " + ic("arrow");
+          desc.textContent = `Cinema Reservas ya está ${donde}.` + (this.mode === "install" ? " Al abrirlo por primera vez te pedirá activar tu licencia." : "");
+        }
       } else if (p.phase === "error") {
         btn.disabled = false; btn.innerHTML = ic("retry") + " Reintentar";
         title.textContent = "No se pudo instalar";
@@ -411,7 +443,7 @@ window.ui = {
 // Datos de ejemplo para ver el diseño en un navegador normal (sin pywebview).
 const DEMO = {
   init: () => ({ view: new URLSearchParams(location.hash.slice(1)).get("view") || new URLSearchParams(location.search).get("view") || "setup", version: "1.20.84",
-    path: "C:\\Users\\Cliente\\AppData\\Local\\CinemaProductions", machineId: "8F3A-21C9-77DE-0B54", reason: "",
+    path: "C:\\Users\\Cliente\\AppData\\Local\\CinemaProductions", installed: new URLSearchParams(location.hash.slice(1)).get("installed") || "", needMB: 430, freeMB: 51200, machineId: "8F3A-21C9-77DE-0B54", reason: "",
     steps: ["Carpetas (en tu usuario, sin admin)", "Programa Cinema Reservas", "Python y dependencias (motor)",
             "Base de datos local", "Acceso directo y desinstalador", "Precalentar el motor"] }),
   // demo de diseño: "demo" simula una activación correcta (la validación real está en Python)

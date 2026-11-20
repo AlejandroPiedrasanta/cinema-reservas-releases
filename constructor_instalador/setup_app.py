@@ -57,6 +57,49 @@ def _version() -> str:
         return "1.0.0"
 
 
+LAUNCHER_DIR = "_lanzador"          # librerias del lanzador (junto a CinemaProductions.exe)
+RELEASES_URL = "https://github.com/AlejandroPiedrasanta/cinema-reservas-releases"
+
+
+def installed_version(t: Path) -> str:
+    """Version ya instalada en esa carpeta ("" si no hay)."""
+    try:
+        if (t / EXE_NAME).exists():
+            return (t / "version.txt").read_text(encoding="utf-8").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def space_needed_mb() -> int:
+    """MB que ocupara lo instalado (tamaño descomprimido de los paquetes + margen)."""
+    total = 0
+    for name in ("app.zip", "runtime.zip", "launcher.zip"):
+        try:
+            with zipfile.ZipFile(res_path("payload/" + name)) as z:
+                total += sum(i.file_size for i in z.infolist())
+        except Exception:
+            pass
+    return int(total / 1024 / 1024) + 150      # + precompilado y margen
+
+
+def free_space_mb(t: Path) -> int:
+    try:
+        p = t if t.exists() else Path(t.anchor or "C:\\")
+        return int(shutil.disk_usage(p).free / 1024 / 1024)
+    except Exception:
+        return 0
+
+
+def close_splash() -> None:
+    """Cierra la imagen que PyInstaller muestra al abrir el instalador (--splash)."""
+    try:
+        import pyi_splash  # solo existe dentro del .exe
+        pyi_splash.close()
+    except Exception:
+        pass
+
+
 def _q(v) -> str:
     """Texto literal de PowerShell (aguanta apostrofes en rutas, p. ej. C:\\Users\\O'Brien)."""
     return "'" + str(v).replace("'", "''") + "'"
@@ -71,9 +114,10 @@ class InstallJob:
     """Trabajo de instalacion, independiente de la interfaz (Qt o web).
     Avisa con callbacks: step(i), progress(pct), log(texto), finished_ok(ok, error)."""
 
-    def __init__(self, target: Path, step, progress, log, finished_ok):
+    def __init__(self, target: Path, step, progress, log, finished_ok, options=None):
         self.target = target
         self.step, self.progress, self.log, self.finished_ok = step, progress, log, finished_ok
+        self.options = {"desktop": True, **(options or {})}
         self._base = 0.0
 
     # progreso interno: cada paso ocupa un tramo
@@ -107,6 +151,10 @@ class InstallJob:
             self.step(0)
             self._base = 0
             self.log("Instalando en %s" % t)
+            need, free = space_needed_mb(), free_space_mb(t)
+            if free and free < need:
+                raise RuntimeError("No hay espacio suficiente en el disco: se necesitan %d MB y quedan "
+                                   "%d MB libres. Libera espacio y vuelve a intentarlo." % (need, free))
             # cierra solo los procesos que corren desde la carpeta de instalacion
             _run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
                   "$h=%s;Get-Process | Where-Object { $_.Path -and $_.Id -ne %d -and "
@@ -123,7 +171,14 @@ class InstallJob:
             self._base = 4
             self.log("Copiando el programa (conservando tus datos si ya existian)…")
             self._extract(pay / "app.zip", t / "app", 22, skip_existing=DATA_KEEP)
-            shutil.copy2(pay / "launcher.exe", t / EXE_NAME)
+            if (pay / "launcher.zip").exists():
+                # lanzador "carpeta" (exe + _lanzador\): abre al instante, sin descomprimirse
+                # en cada arranque como el de un solo archivo
+                shutil.rmtree(t / LAUNCHER_DIR, ignore_errors=True)
+                with zipfile.ZipFile(pay / "launcher.zip") as z:
+                    z.extractall(t)
+            else:
+                shutil.copy2(pay / "launcher.exe", t / EXE_NAME)
             ico = pay / "icono.ico"
             if ico.exists():
                 shutil.copy2(ico, t / "icono.ico")
@@ -226,10 +281,13 @@ class InstallJob:
             pass
         start = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Cinema Reservas"
         start.mkdir(parents=True, exist_ok=True)
-        links = [(desk / "Cinema Reservas.lnk", "", "Abrir Cinema Reservas"),
-                 (start / "Cinema Reservas.lnk", "", "Abrir Cinema Reservas"),
+        links = [(start / "Cinema Reservas.lnk", "", "Abrir Cinema Reservas"),
                  (start / "Detener Cinema Reservas.lnk", "--stop", "Cerrar el servidor local"),
                  (start / "Desinstalar Cinema Reservas.lnk", "--uninstall", "Desinstalar")]
+        if self.options.get("desktop", True):
+            links.insert(0, (desk / "Cinema Reservas.lnk", "", "Abrir Cinema Reservas"))
+        else:                                   # el cliente no lo quiere: quitar el de antes
+            (desk / "Cinema Reservas.lnk").unlink(missing_ok=True)
         ps = ["$s=New-Object -ComObject WScript.Shell"]
         for p, args, desc in links:
             ps.append("$l=$s.CreateShortcut(%s);$l.TargetPath=%s;$l.Arguments=%s;"
@@ -249,8 +307,19 @@ class InstallJob:
             s("InstallLocation", str(t))
             s("DisplayIcon", str(t / "icono.ico"))
             s("UninstallString", '"%s" --uninstall' % (t / EXE_NAME))
+            s("QuietUninstallString", '"%s" --uninstall' % (t / EXE_NAME))
+            s("Comments", "Gestor de reservas de eventos")
+            s("URLInfoAbout", RELEASES_URL)
+            s("URLUpdateInfo", RELEASES_URL + "/releases/latest")
+            s("HelpLink", RELEASES_URL)
+            s("InstallDate", time.strftime("%Y%m%d"))
             winreg.SetValueEx(k, "NoModify", 0, winreg.REG_DWORD, 1)
             winreg.SetValueEx(k, "NoRepair", 0, winreg.REG_DWORD, 1)
+            try:   # tamaño que muestra Windows en "Aplicaciones instaladas" (KB)
+                kb = sum(f.stat().st_size for f in t.rglob("*") if f.is_file()) // 1024
+                winreg.SetValueEx(k, "EstimatedSize", 0, winreg.REG_DWORD, int(min(kb, 0xFFFFFFFF)))
+            except Exception:
+                pass
 
 
 class Installer(QThread):
@@ -279,17 +348,23 @@ class SetupApi:
         self._target = install_dir()
 
     def init(self):
-        return {"view": "setup", "version": _version(), "path": str(self._target), "steps": STEPS}
+        return {"view": "setup", "version": _version(), "path": str(self._target), "steps": STEPS,
+                "installed": installed_version(self._target),
+                "needMB": space_needed_mb(), "freeMB": free_space_mb(self._target)}
 
-    def install(self):
+    def install(self, options=None):
         if self._busy:
             return False
         self._busy = True
         w = self._win
+        opts = dict(options or {})
 
         def done(ok: bool, err: str):
             self._busy = False
-            w.push(phase="done" if ok else "error", error=(err or "")[:400])
+            w.push(phase="done" if ok else "error", error=(err or "")[:400],
+                   autoOpen=bool(ok and opts.get("open")))
+            if ok and opts.get("open"):
+                threading.Timer(1.6, self.open_app).start()   # "Abrir al terminar"
 
         last = {"t": 0.0, "v": -1.0}
 
@@ -300,7 +375,7 @@ class SetupApi:
                 w.push(pct=v)
 
         job = InstallJob(self._target, lambda i: w.push(step=i), progress,
-                         lambda s: w.push(log=s), done)
+                         lambda s: w.push(log=s), done, options={"desktop": opts.get("desktop", True)})
         threading.Thread(target=job.run, daemon=True).start()
         return True
 
@@ -322,6 +397,7 @@ def run_web() -> None:
     api = SetupApi()
     api._win = webui.Window(api, "setup", 920, 640, "Instalar Cinema Reservas")
     api._win.can_close = lambda: not api._busy
+    api._win.w.events.shown += lambda *_: close_splash()    # la ventana ya se ve: quitar la imagen
     webui.start()
 
 
@@ -543,6 +619,7 @@ def main():
     app.setStyle("Fusion")
     win = SetupWindow()
     win.show()
+    close_splash()
     sys.exit(app.exec())
 
 

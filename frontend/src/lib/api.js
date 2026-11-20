@@ -1,0 +1,345 @@
+import axios from "axios";
+
+const BASE = `${window.__API_BASE_URL__ || process.env.REACT_APP_BACKEND_URL}/api`;
+
+// Timeout global (30s) para que si un endpoint tarda demasiado (ej. GitHub API
+// caído en la app de escritorio) el frontend no se quede colgado en spinners.
+export const api = axios.create({ baseURL: BASE, timeout: 30000 });
+
+// Interceptor de respuestas: reporta automáticamente los fallos de backend
+// (errores 5xx y errores de red) para que no pasen desapercibidos. Se evita
+// reportar el propio endpoint de reporte para no entrar en bucle.
+api.interceptors.response.use(
+  (r) => r,
+  async (error) => {
+    try {
+      const cfg = error?.config || {};
+      const url = cfg.url || "";
+      const status = error?.response?.status;
+      const isReportCall = url.includes("/errors/report");
+      const isServerOrNetwork = !error?.response || (status >= 500);
+      if (!isReportCall && isServerOrNetwork) {
+        const backendIssue = error?.response?.data?.github_issue_url;
+        const { reportError } = await import("@/lib/errorReporter");
+        // Si el backend ya reportó (500 con reference), solo notificamos.
+        if (error?.response?.data?.reported) {
+          try {
+            window.dispatchEvent(new CustomEvent("cp:error-reported", {
+              detail: {
+                fingerprint: error.response.data.reference,
+                github_issue_url: backendIssue,
+                message: error.response.data.message || "Error del servidor",
+                source: "backend",
+              },
+            }));
+          } catch { /* ignore */ }
+        } else {
+          reportError({
+            source: "frontend",
+            message: `Fallo de API ${cfg.method?.toUpperCase() || ""} ${url}: ${error?.message || status || "sin respuesta"}`,
+            stack: error?.stack || "",
+            context: { url, method: cfg.method, status: status || "network_error" },
+          });
+        }
+      }
+    } catch { /* nunca romper el flujo por el reporte */ }
+    return Promise.reject(error);
+  }
+);
+
+export const getStats = () => api.get("/stats").then(r => r.data);
+export const getReservations = () => api.get("/reservations").then(r => r.data);
+export const getReservation = (id) => api.get(`/reservations/${id}`).then(r => r.data);
+export const createReservation = (data) => api.post("/reservations", data).then(r => r.data);
+export const updateReservation = (id, data) => api.put(`/reservations/${id}`, data).then(r => r.data);
+export const deleteReservation = (id) => api.delete(`/reservations/${id}`).then(r => r.data);
+export const getCalendarEvents = () => api.get("/calendar").then(r => r.data);
+
+export const uploadReceipt = (id, file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.post(`/reservations/${id}/receipts`, form).then(r => r.data);
+};
+
+export const deleteReceipt = (id, receiptId) =>
+  api.delete(`/reservations/${id}/receipts/${receiptId}`).then(r => r.data);
+
+// Socios
+export const getSocios = () => api.get("/socios").then(r => r.data);
+export const getSocio = (id) => api.get(`/socios/${id}`).then(r => r.data);
+export const createSocio = (data) => api.post("/socios", data).then(r => r.data);
+export const updateSocio = (id, data) => api.put(`/socios/${id}`, data).then(r => r.data);
+export const deleteSocio = (id) => api.delete(`/socios/${id}`).then(r => r.data);
+export const uploadSocioPhoto = (id, file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.post(`/socios/${id}/photo`, form).then(r => r.data);
+};
+export const deleteSocioPhoto = (id) => api.delete(`/socios/${id}/photo`).then(r => r.data);
+export const getFinancials = () => api.get("/financials").then(r => r.data);
+
+// Metas (Goals)
+export const getMetas = (year, type) => api.get(`/metas?year=${year}&type=${type}`).then(r => r.data);
+export const upsertMeta = (data) => api.put("/metas", data).then(r => r.data);
+export const deleteMeta = (year, type, month) => {
+  const q = month == null ? `year=${year}&type=${type}` : `year=${year}&type=${type}&month=${month}`;
+  return api.delete(`/metas?${q}`).then(r => r.data);
+};
+export const getMetasProgress = (year, type) => api.get(`/metas/progress?year=${year}&type=${type}`).then(r => r.data);
+
+// Catálogo de Ventas (Sales Catalog)
+export const getCatalog = () => api.get("/catalog").then(r => r.data);
+export const createCatalogService = (data) => api.post("/catalog", data).then(r => r.data);
+export const updateCatalogService = (id, data) => api.put(`/catalog/${id}`, data).then(r => r.data);
+export const deleteCatalogService = (id) => api.delete(`/catalog/${id}`).then(r => r.data);
+export const reorderCatalog = (order) => api.post("/catalog/reorder", { order }).then(r => r.data);
+export const uploadCatalogMedia = (id, file, onProgress) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.post(`/catalog/${id}/media`, form, {
+    timeout: 120000,
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+    },
+  }).then(r => r.data);
+};
+export const reorderCatalogMedia = (id, order) => api.post(`/catalog/${id}/media/reorder`, { order }).then(r => r.data);
+export const deleteCatalogMedia = (mediaId) => api.delete(`/catalog/media/${mediaId}`).then(r => r.data);
+// URL absoluta para mostrar / descargar un archivo del catálogo
+export const catalogMediaUrl = (mediaId, download = false) =>
+  `${BASE}/catalog/media/${mediaId}${download ? "?download=1" : ""}`;
+
+// App Settings
+export const getAppSettings = () => api.get("/settings").then(r => r.data);
+export const updateAppSettings = (data) => api.put("/settings", data).then(r => r.data);
+
+// Database Settings
+export const getDbStats = () => api.get("/settings/database").then(r => r.data);
+export const testDbConnection = (url) => api.post("/settings/database/test", { url }).then(r => r.data);
+export const compareDatabase = (url) => api.post("/settings/database/compare", { url }).then(r => r.data);
+export const switchDatabase = (url) => api.post("/settings/database/connect", { url }).then(r => r.data);
+export const resetDatabase = () => api.post("/settings/database/reset").then(r => r.data);
+export const optimizeDatabase = () => api.post("/settings/database/optimize").then(r => r.data);
+export const getFactoryPresets = () => api.get("/settings/database/factory-presets").then(r => r.data);
+
+// Reminders
+export const sendTestReminder   = () => api.post("/reminders/send").then(r => r.data);
+export const testEmailConnection = () => api.post("/reminders/test-email").then(r => r.data);
+
+// Notifications
+export const getPendingNotifications = () => api.get("/notifications/pending").then(r => r.data);
+
+// Backup
+export const getBackupHistory = () => api.get("/backup/history").then(r => r.data);
+export const createServerBackup = () => api.post("/backup/create").then(r => r.data);
+export const deleteBackupFile = (filename) => api.delete(`/backup/${filename}`).then(r => r.data);
+export const downloadBackupUrl = () => `${BASE}/backup/download`;
+export const downloadBackupFileUrl = (filename) => `${BASE}/backup/${encodeURIComponent(filename)}/download`;
+export const restoreBackup = (file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.post("/backup/restore", form).then(r => r.data);
+};
+export const previewBackup = (file) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api.post("/backup/preview", form, { timeout: 45000 }).then(r => r.data);
+};
+export const createCloudBackup = () => api.post("/backup/cloud/create", null, { timeout: 60000 }).then(r => r.data);
+export const listCloudBackups = () => api.get("/backup/cloud/list").then(r => r.data);
+
+// Updates
+export const getUpdatesHistory = () => api.get("/updates/history").then(r => r.data);
+export const getLatestUpdate = () => api.get("/updates/latest").then(r => r.data);
+export const deleteUpdate = (id) => api.delete(`/updates/${id}`).then(r => r.data);
+export const setLatestUpdate = (id) => api.put(`/updates/${id}/set-latest`).then(r => r.data);
+export const checkRemoteUpdate = (url, currentVersion) =>
+  api.get(`/updates/check-remote?url=${encodeURIComponent(url)}&current_version=${currentVersion}`).then(r => r.data);
+export const getUpdateDownloadUrl = (id) => `${BASE}/updates/download/${id}`;
+export const uploadAppUpdate = (file, version, notes, channel) => {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("version", version);
+  form.append("notes", notes || "");
+  form.append("channel", channel || "stable");
+  return api.post("/updates/upload", form).then(r => r.data);
+};
+export const checkForUpdates = () => api.get("/updates/check").then(r => r.data);
+export const getUpdateManifest = (refresh = false) =>
+  api.get("/updates/manifest", { params: refresh ? { refresh: true } : {} }).then(r => r.data);
+
+// Appearance cloud sync & saved themes
+export const getCloudAppearance = () => api.get("/settings/appearance").then(r => r.data);
+export const saveCloudAppearance = (snapshot) => api.put("/settings/appearance", { snapshot }).then(r => r.data);
+export const getSavedThemes = () => api.get("/themes").then(r => r.data);
+export const createSavedTheme = (name, snapshot) => api.post("/themes", { name, snapshot }).then(r => r.data);
+export const updateSavedTheme = (id, snapshot, name) => api.put(`/themes/${id}`, { snapshot, ...(name ? { name } : {}) }).then(r => r.data);
+export const deleteSavedTheme = (id) => api.delete(`/themes/${id}`).then(r => r.data);
+export const setDefaultTheme = (id) => api.post(`/themes/${id}/set-default`).then(r => r.data);
+export const syncThemesNow = () => api.post("/themes/sync").then(r => r.data);
+export const getThemesSyncStatus = () => api.get("/themes/sync/status").then(r => r.data);
+
+// App security
+export const getSecurityStatus = () => api.get("/security/status").then(r => r.data);
+export const setAppPassword = (password, hint, current_password) => api.post("/security/set-password", { password, hint, current_password }).then(r => r.data);
+export const verifyAppPassword = (password) => api.post("/security/verify", { password }).then(r => r.data);
+export const removeAppPassword = (current_password) => api.post("/security/remove-password", { current_password }).then(r => r.data);
+export const setPageProtection = (enabled) => api.put("/security/protection", { enabled }).then(r => r.data);
+export const setAdvancedSecurity = (data) => api.put("/security/advanced-config", data).then(r => r.data);
+export const getZipPassword = () => api.get("/security/zip-password").then(r => r.data);
+export const setZipPassword = (new_password) => api.post("/security/zip-password", { new_password }).then(r => r.data);
+export const resetZipPassword = () => api.post("/security/zip-password/reset").then(r => r.data);
+
+// GitHub Integration
+export const getGithubConfig = () => api.get("/github/config").then(r => r.data);
+export const saveGithubConfig = (data) => api.post("/github/config", data).then(r => r.data);
+export const connectGithub = (token, repo_url, branch) => api.post("/github/connect", { token, repo_url, branch }).then(r => r.data);
+export const disconnectGithub = () => api.post("/github/disconnect").then(r => r.data);
+export const githubPushAll = (message, version, versionName, include) =>
+  api.post("/github/push-all", { message, version, version_name: versionName, include }).then(r => r.data);
+export const getGithubPushStatus = () => api.get("/github/push-status").then(r => r.data);
+export const getGithubPushPreview = () => api.get("/github/push-preview").then(r => r.data);
+export const getGithubPushDiff = (refresh = false) =>
+  api.get("/github/push-diff", { params: { refresh }, timeout: 180000 }).then(r => r.data);
+export const getGithubNextVersion = () => api.get("/github/next-version").then(r => r.data);
+export const getGithubStorage = () => api.get("/github/storage").then(r => r.data);
+export const triggerGithubBuildExe = (version) => api.post("/github/build-exe", version ? { version } : {}).then(r => r.data);
+export const deleteGithubBuilds = (opts = {}) =>
+  api.delete("/github/builds", { data: opts, timeout: 120000 }).then(r => r.data);
+export const applyUpdateAndRestart = () => api.post("/updates/apply-and-restart", {}, { timeout: 600000 }).then(r => r.data);
+export const runDiagnostic = () => api.get("/diagnostic").then(r => r.data);
+export const fixDiagnosticIssue = (id) => api.post("/diagnostic/fix", { id }).then(r => r.data);
+export const fixAllDiagnosticIssues = () => api.post("/diagnostic/fix-all").then(r => r.data);
+export const checkGithubUpdates = () => api.get("/github/check-updates").then(r => r.data);
+export const applyGithubUpdate = (force = true) => api.post("/github/apply-update", { force }, { timeout: 600000 }).then(r => r.data);
+export const getUpdateProgress = () => api.get("/github/update-progress").then(r => r.data);
+
+// Ping ligero para detectar cuando el backend vuelve tras una auto-actualización.
+// Usa un cliente sin baseURL para evitar redirects y con timeout corto.
+export const pingBackend = () => axios.get(`${BASE}/`, { timeout: 2500 }).then(r => r.data);
+
+// Espera hasta que el backend NUEVO esté arriba tras un reinicio por
+// actualización. Devuelve true si el binario nuevo respondió antes de
+// `timeoutMs`, false si se agotó el tiempo. Poll cada 500ms.
+//
+// BUG HISTÓRICO (pantalla en blanco): el backend viejo no muere de inmediato
+// (programa su salida ~3s después de responder). La versión anterior de esta
+// función esperaba solo 1.5s y luego recargaba en cuanto "algo" respondía →
+// pegaba al servidor VIEJO que estaba a punto de morir, recargaba dentro de la
+// "zona muerta" del swap del .exe y mostraba pantalla en blanco.
+//
+// ARREGLO: no basta con que "algo responda". Solo consideramos listo cuando:
+//   1. El backend reporta una `version` DISTINTA a la vieja (= binario nuevo), o
+//   2. (fallback, si no sabemos la versión) hemos visto caer el servidor
+//      (`sawDown`) y luego volver a responder.
+export const waitBackendReady = async (expectedVersionOrTimeout = null, timeoutMs = 120000) => {
+  // Compatibilidad: si el 1er argumento es un número, es el timeout (firma vieja).
+  let oldVersion = null;
+  if (typeof expectedVersionOrTimeout === "number") {
+    timeoutMs = expectedVersionOrTimeout;
+  } else if (expectedVersionOrTimeout != null) {
+    oldVersion = String(expectedVersionOrTimeout);
+  }
+
+  const start = Date.now();
+  let sawDown = false;
+  // Espera inicial > al retardo de apagado del backend (~3s) + margen del swap,
+  // para no pegarle al servidor viejo justo antes de morir.
+  await new Promise(r => setTimeout(r, 3500));
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const data = await pingBackend();
+      const v = data && data.version != null ? String(data.version) : null;
+
+      if (oldVersion != null) {
+        // Sabemos la versión previa: solo aceptamos si cambió (= binario nuevo).
+        if (v && v !== oldVersion) {
+          await new Promise(r => setTimeout(r, 400));
+          return true;
+        }
+        // Respondió pero sigue la versión vieja → servidor viejo aún muriendo.
+        // Si además ya lo vimos caer y volver, aceptamos como fallback.
+        if (sawDown && v) {
+          await new Promise(r => setTimeout(r, 400));
+          return true;
+        }
+      } else {
+        // No sabemos la versión: exigimos haber visto caer el servidor antes de
+        // aceptar, así garantizamos que es el proceso recién reiniciado.
+        if (sawDown) {
+          await new Promise(r => setTimeout(r, 400));
+          return true;
+        }
+      }
+    } catch {
+      // El servidor dejó de responder: el binario viejo murió. A partir de aquí
+      // el próximo ping exitoso será (casi seguro) el binario nuevo.
+      sawDown = true;
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  return false;
+};
+
+// Recarga "dura" tras aplicar una actualización: desregistra el service
+// worker y borra el caché HTTP + Cache API antes de forzar un reload con
+// cache-bust. Sin esto, el navegador puede quedarse con un index.html viejo
+// que referencia chunks JS que ya no existen → pantalla en blanco.
+export const hardReloadAfterUpdate = async () => {
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister().catch(() => {})));
+    }
+  } catch { /* ignore */ }
+  try {
+    if (typeof caches !== "undefined" && caches.keys) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k).catch(() => false)));
+    }
+  } catch { /* ignore */ }
+  // Cache-bust: fuerza al navegador a pedir index.html nuevo.
+  const url = new URL(window.location.href);
+  url.searchParams.set("_v", Date.now().toString());
+  window.location.replace(url.toString());
+};
+
+// AI Context (Contexto para la próxima IA)
+export const getAiContext = () => api.get("/ai-context").then(r => r.data);
+export const saveAiContext = (content) => api.post("/ai-context", { content }).then(r => r.data);
+export const resetAiContext = () => api.post("/ai-context/reset").then(r => r.data);
+
+
+
+// ─── Admin: user management (Soporte avanzado > Usuarios) ───────────────
+const adminHeaders = (password) => ({ headers: { "X-Admin-Password": password || "" } });
+export const adminListUsers   = (pwd)               => api.get("/admin/users", adminHeaders(pwd)).then(r => r.data);
+export const adminDisableUser = (pwd, userId)       => api.post(`/admin/users/${userId}/disable`, {}, adminHeaders(pwd)).then(r => r.data);
+export const adminEnableUser  = (pwd, userId)       => api.post(`/admin/users/${userId}/enable`, {}, adminHeaders(pwd)).then(r => r.data);
+export const adminRevokePlan  = (pwd, userId)       => api.post(`/admin/users/${userId}/revoke`, {}, adminHeaders(pwd)).then(r => r.data);
+export const adminGrantPlan   = (pwd, userId, plan, months=1) => api.post(`/admin/users/${userId}/grant`, { plan, months }, adminHeaders(pwd)).then(r => r.data);
+export const adminDeleteUser  = (pwd, userId)       => api.delete(`/admin/users/${userId}`, adminHeaders(pwd)).then(r => r.data);
+
+// ─── Admin: PayPal credentials management ───────────────────────────────
+export const adminGetPaypalConfig    = (pwd)          => api.get("/admin/paypal/config", adminHeaders(pwd)).then(r => r.data);
+export const adminUpdatePaypalConfig = (pwd, payload) => api.patch("/admin/paypal/config", payload, adminHeaders(pwd)).then(r => r.data);
+export const adminTestPaypalConfig   = (pwd)          => api.post("/admin/paypal/test", {}, adminHeaders(pwd)).then(r => r.data);
+
+// ─── Admin: Google Sign-In credentials management ───────────────────────
+export const adminGetGoogleLoginConfig    = (pwd)          => api.get("/admin/google-login/config", adminHeaders(pwd)).then(r => r.data);
+export const adminUpdateGoogleLoginConfig = (pwd, payload) => api.patch("/admin/google-login/config", payload, adminHeaders(pwd)).then(r => r.data);
+export const getGoogleAuthConfig          = ()             => api.get("/auth/google-config").then(r => r.data);
+
+// ─── Error Reporting / Incidencias ──────────────────────────────────────
+export const reportErrorToServer = (payload) => api.post("/errors/report", payload).then(r => r.data);
+export const listErrors = (includeResolved = false) =>
+  api.get("/errors", { params: { include_resolved: includeResolved } }).then(r => r.data);
+export const resolveError = (id) => api.post(`/errors/${id}/resolve`).then(r => r.data);
+export const deleteError = (id) => api.delete(`/errors/${id}`).then(r => r.data);
+export const clearResolvedErrors = () => api.post("/errors/clear-resolved").then(r => r.data);
+export const getErrorSettings = () => api.get("/errors/settings").then(r => r.data);
+export const updateErrorSettings = (data) => api.put("/errors/settings", data).then(r => r.data);
+export const getUpdateLastResult = (clear = false) =>
+  api.get("/updates/last-result", { params: { clear } }).then(r => r.data);
+

@@ -1,0 +1,641 @@
+import { useEffect, useState, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  Upload, Trash2, Download, Star, RefreshCw, Package,
+  Clock, FileArchive, ArrowRight, Monitor, Cloud, CheckCircle2, Database, Globe, Sparkles,
+  Github, GitBranch, GitCommit, ArrowDownCircle, AlertTriangle, Loader2, ExternalLink
+} from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { useSettings } from "@/context/SettingsContext";
+import { getUpdatesHistory, uploadAppUpdate, deleteUpdate, setLatestUpdate, getUpdateDownloadUrl, checkForUpdates,
+  getUpdateManifest,
+  getGithubConfig, checkGithubUpdates, applyGithubUpdate, waitBackendReady, hardReloadAfterUpdate, getUpdateProgress } from "@/lib/api";
+import { celebrateUpdate } from "@/lib/celebrations";
+
+function formatBytes(bytes) {
+  if (!bytes) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatDate(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("es-GT", { dateStyle: "short", timeStyle: "short" });
+}
+
+const CHANNEL_STYLES = {
+  stable: "bg-emerald-100 text-emerald-700",
+  beta:   "bg-amber-100 text-amber-700",
+  alpha:  "bg-red-100 text-red-700",
+};
+
+const CHANNEL_LABELS = { stable: "Estable", beta: "Beta", alpha: "Alpha" };
+
+// How-it-works steps
+const STEPS = [
+  { icon: Cloud, label: "Actualizas el código aquí", sub: "Haces cambios en la app web" },
+  { icon: Download, label: "Ajustes → Descargar para Windows", sub: "Se registra automáticamente en la base de datos" },
+  { icon: Database, label: "Todas las apps lo detectan", sub: "Al compartir la misma base de datos, todas ven la nueva versión" },
+  { icon: Monitor, label: "Notificación automática", sub: "La app muestra un aviso con botón para descargar" },
+];
+
+export default function UpdatesPage() {
+  const { toast } = useToast();
+  const { autoCheckUpdates, changeAutoCheckUpdates } = useSettings();
+  const fileRef = useRef();
+
+  // Upload state
+  const [version, setVersion] = useState("");
+  const [notes, setNotes] = useState("");
+  const [channel, setChannel] = useState("stable");
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+
+  // History
+  const [history, setHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+
+  // Online check
+  const [checking, setChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState(null);
+
+  // ── GitHub Updates ──────────────────────────────────
+  const [ghConfig, setGhConfig] = useState({ repo_url: "", branch: "main" });
+  const [ghChecking, setGhChecking] = useState(false);
+  const [ghApplying, setGhApplying] = useState(false);
+  const [ghResult, setGhResult] = useState(null);
+  const [ghProgress, setGhProgress] = useState(null);
+  const ghProgressTimer = useRef(null);
+
+  const startGhProgressPolling = () => {
+    if (ghProgressTimer.current) clearInterval(ghProgressTimer.current);
+    ghProgressTimer.current = setInterval(async () => {
+      try {
+        const p = await getUpdateProgress();
+        setGhProgress(p);
+        if (!p?.active && (p?.stage === "done" || p?.stage === "error")) {
+          clearInterval(ghProgressTimer.current); ghProgressTimer.current = null;
+        }
+      } catch {
+        clearInterval(ghProgressTimer.current); ghProgressTimer.current = null;
+      }
+    }, 600);
+  };
+  const stopGhProgressPolling = () => {
+    if (ghProgressTimer.current) { clearInterval(ghProgressTimer.current); ghProgressTimer.current = null; }
+  };
+
+  useEffect(() => {
+    (async () => {
+      try { setGhConfig(await getGithubConfig()); } catch { /* noop */ }
+    })();
+  }, []);
+
+  const handleCheckGithub = async () => {
+    setGhChecking(true);
+    setGhResult(null);
+    setCheckResult(null);
+    try {
+      const res = await checkGithubUpdates();
+      if (res.has_updates) {
+        setGhResult(res);
+        toast({ title: `Nueva versión disponible`, description: `${res.commits_ahead} cambio(s) nuevo(s). Pulsa "Aplicar" para instalarla.` });
+      } else {
+        // Banner prominente: ya estás al día
+        setCheckResult({ status: "latest", version: res.remote_version || res.local_version || "" });
+        toast({ title: "Ya tienes la versión más actual ✓", description: "Tu app está al día con el repositorio de GitHub" });
+      }
+    } catch (err) {
+      const isTimeout = err?.code === "ECONNABORTED" || /timeout/i.test(err?.message || "");
+      toast({
+        title: isTimeout ? "Sin respuesta de GitHub" : "Error al verificar",
+        description: isTimeout
+          ? "GitHub tardó demasiado en responder. Verifica tu conexión e intenta de nuevo."
+          : (err?.response?.data?.detail || String(err)),
+        variant: "destructive",
+      });
+    } finally {
+      setGhChecking(false);
+    }
+  };
+
+  const handleApplyGithub = async () => {
+    if (!window.confirm("¿Aplicar la actualización desde GitHub?\n\nSe descargará el código nuevo, se aplicará automáticamente y la app se reiniciará. Tus datos (reservas, socios, .env) se conservan.")) return;
+    if (ghApplying) return;
+    setGhApplying(true);
+    let restarting = false;
+    try {
+      const res = await applyGithubUpdate(true);
+      setGhResult(null);
+      if (res.restarted) {
+        // App de escritorio: aplicado automáticamente y reiniciando
+        restarting = true;
+        if (res.status === "installing") startGhProgressPolling();
+        setCheckResult({ status: "installed", message: res.message });
+        celebrateUpdate();
+        toast({
+          title: `Actualización aplicada (${res.files_updated} archivos)`,
+          description: "Esperando a que la app vuelva a arrancar…",
+        });
+        const ok = await waitBackendReady(res.old_version || null, 120000);
+        stopGhProgressPolling();
+        if (ok) await hardReloadAfterUpdate();
+        else {
+          toast({
+            title: "La app tardó demasiado en reiniciarse",
+            description: "Cierra y vuelve a abrir Cinema Productions.",
+            variant: "destructive",
+          });
+        }
+      } else if (res.is_desktop) {
+        // Modo desktop sin reinicio: descarga manual o "aún publicándose".
+        if (res.download_url) {
+          try {
+            const a = document.createElement("a");
+            a.href = res.download_url;
+            a.rel = "noreferrer";
+            a.download = res.download_name || "";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          } catch { window.open(res.download_url, "_blank"); }
+          setCheckResult({ status: "desktop_update", message: res.message });
+          toast({
+            title: "Descargando la nueva versión",
+            description: res.message || "Al terminar, cierra la app e instala/reemplaza el archivo descargado.",
+          });
+        } else {
+          setCheckResult({ status: "latest", version: res.installed_version });
+          toast({
+            title: res.status === "up_to_date" ? "Ya tienes el binario más reciente" : "Sin binario disponible aún",
+            description: res.message || "La nueva versión se está publicando en GitHub. Inténtalo en unos minutos.",
+          });
+        }
+      } else {
+        restarting = true;
+        setCheckResult({ status: "installed", version: res.new_sha_short });
+        celebrateUpdate();
+        toast({ title: "Versión nueva instalada", description: "Esperando a que la app vuelva a arrancar…" });
+        const ok = await waitBackendReady(res.old_version || null, 60000);
+        if (ok) await hardReloadAfterUpdate();
+      }
+    } catch (err) {
+      // Si es error de red (server ya salió), esperar el reinicio como en el caso OK
+      const netErr = err?.code === "ERR_NETWORK" || err?.code === "ECONNABORTED" || !err?.response;
+      if (netErr) {
+        restarting = true;
+        toast({ title: "Actualización en curso", description: "La app se está reiniciando…" });
+        const ok = await waitBackendReady(120000);
+        if (ok) await hardReloadAfterUpdate();
+        else toast({
+          title: "La app tardó demasiado en reiniciarse",
+          description: "Cierra y vuelve a abrir Cinema Productions.",
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Error al aplicar", description: err?.response?.data?.detail || String(err), variant: "destructive" });
+      }
+    } finally {
+      if (!restarting) setGhApplying(false);
+    }
+  };
+
+  const handleCheckOnline = async (silent = false) => {
+    setChecking(true);
+    try {
+      // ── 1) SEMÁFORO AUTORITATIVO: consultar el manifest version.json primero.
+      //     Solo notificamos actualización cuando el manifest existe (indica
+      //     que TODOS los binarios están 100% publicados en la Release y sus
+      //     hashes SHA256 son verificables). Esto elimina la carrera donde
+      //     el cliente ve una versión nueva antes de que el .exe termine de subir.
+      let manifest = null;
+      try {
+        manifest = await getUpdateManifest(true);
+      } catch { /* fallback silencioso al método legacy */ }
+
+      if (manifest && manifest.status === "ready" && manifest.has_update) {
+        setCheckResult({
+          status: "update",
+          local_version: manifest.local_version,
+          remote_version: manifest.remote_version,
+          from_manifest: true,
+          manifest: manifest.manifest,
+          source_url: manifest.source_url,
+          notes: (manifest.manifest && manifest.manifest.release_url)
+            ? `Descarga verificada con SHA256 · Release ${manifest.manifest.release_tag}`
+            : "Descarga verificada con SHA256",
+          download_url: manifest.manifest?.release_url || manifest.source_url,
+        });
+        return;
+      }
+
+      // ── 2) Fallback al chequeo legacy (version.txt + MongoDB).
+      const r = await checkForUpdates();
+
+      // Guard extra: si el chequeo legacy dice has_update pero el manifest
+      // NO está disponible (o no está listo), NO notificar — evita descargas fallidas.
+      const manifestBlocks =
+        r.has_update && r.remote_source !== "manifest" && manifest && manifest.status === "not_available";
+
+      if (r.has_update && !manifestBlocks) {
+        setCheckResult({ status: "update", ...r });
+      } else if (manifestBlocks) {
+        setCheckResult({
+          status: "latest",
+          version: r.local_version,
+          waiting_manifest: true,
+        });
+      } else {
+        setCheckResult({ status: "latest", version: r.remote_version || r.local_version });
+      }
+    } catch {
+      if (!silent) toast({ title: "No se pudo consultar la base de datos", variant: "destructive" });
+    } finally { setChecking(false); }
+  };
+
+  useEffect(() => {
+    if (autoCheckUpdates) handleCheckOnline(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const load = async () => {
+    setLoadingHistory(true);
+    try { setHistory(await getUpdatesHistory()); }
+    catch { toast({ title: "Error al cargar historial", variant: "destructive" }); }
+    finally { setLoadingHistory(false); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const handleFileDrop = (e) => {
+    e.preventDefault(); setDragOver(false);
+    const f = e.dataTransfer.files[0];
+    if (f) setSelectedFile(f);
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) { toast({ title: "Selecciona un archivo primero", variant: "destructive" }); return; }
+    if (!version.trim()) { toast({ title: "Ingresa un número de versión (ej: 1.0.1)", variant: "destructive" }); return; }
+    setUploading(true);
+    try {
+      await uploadAppUpdate(selectedFile, version.trim(), notes, channel);
+      toast({ title: `Versión ${version} publicada correctamente` });
+      setSelectedFile(null); setVersion(""); setNotes(""); setChannel("stable");
+      load();
+    } catch (e) {
+      toast({ title: "Error al subir", description: e.response?.data?.detail || "Error", variant: "destructive" });
+    } finally { setUploading(false); }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("¿Eliminar esta versión?")) return;
+    try { await deleteUpdate(id); toast({ title: "Versión eliminada" }); load(); }
+    catch { toast({ title: "Error al eliminar", variant: "destructive" }); }
+  };
+
+  const handleSetLatest = async (id) => {
+    try { await setLatestUpdate(id); toast({ title: "Versión marcada como activa" }); load(); }
+    catch { toast({ title: "Error", variant: "destructive" }); }
+  };
+
+  const latest = history.find(h => h.is_latest);
+
+  return (
+    <div className="px-6 py-8 max-w-7xl mx-auto">
+      {/* Header */}
+      <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="mb-8">
+        <div className="flex items-center gap-3">
+          <motion.div
+            animate={{ rotate: [0, -8, 8, 0], scale: [1, 1.05, 1] }}
+            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+            className="w-12 h-12 rounded-2xl btn-primary flex items-center justify-center shadow-lg flex-shrink-0"
+          >
+            <Package size={22} className="text-white" strokeWidth={2} />
+          </motion.div>
+          <h1 className="text-5xl font-black gradient-text tracking-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
+            Actualizaciones
+          </h1>
+        </div>
+        <p className="text-sm text-slate-500 font-medium mt-1.5">
+          Publica nuevas versiones de tu App de Escritorio
+        </p>
+      </motion.div>
+
+      {/* Stats */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+        className="grid grid-cols-3 gap-4 mb-6">
+        {[
+          { label: "Versión activa", value: latest ? `v${latest.version}` : "—", icon: Star, color: "bg-emerald-100 text-emerald-600" },
+          { label: "Total versiones", value: history.length, icon: Package, color: "bg-indigo-100 text-indigo-600" },
+          { label: "Última subida", value: latest ? formatDate(latest.created_at) : "—", icon: Clock, color: "bg-amber-100 text-amber-600" },
+        ].map(({ label, value, icon: Icon, color }) => (
+          <div key={label} className="glass rounded-3xl p-5 flex items-center gap-4">
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0 ${color}`}>
+              <Icon size={18} strokeWidth={1.8} />
+            </div>
+            <div>
+              <p className="text-xl font-black text-slate-900" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>{value}</p>
+              <p className="text-xs text-slate-400 font-medium">{label}</p>
+            </div>
+          </div>
+        ))}
+      </motion.div>
+
+      {/* Online update check */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}
+        className="glass rounded-3xl p-6 mb-5">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="w-11 h-11 rounded-2xl bg-indigo-100 flex items-center justify-center flex-shrink-0">
+              <Globe size={20} className="text-indigo-600" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-slate-800" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
+                Buscar actualización
+              </p>
+              <p className="text-xs text-slate-400">Consulta tu repositorio de GitHub en busca de una versión nueva</p>
+            </div>
+          </div>
+          <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+            onClick={handleCheckGithub}
+            disabled={ghChecking}
+            data-testid="check-updates-btn"
+            className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl btn-primary text-white text-xs font-bold disabled:opacity-60 flex-shrink-0">
+            {ghChecking
+              ? <><RefreshCw size={14} className="animate-spin" /> Buscando…</>
+              : <><RefreshCw size={14} /> Buscar actualización</>}
+          </motion.button>
+        </div>
+
+        {/* Auto-check toggle */}
+        <div className="flex items-center justify-between mt-4 pt-4 border-t border-white/40">
+          <div>
+            <p className="text-xs font-bold text-slate-600">Chequeo automático</p>
+            <p className="text-[10px] text-slate-400">Busca actualizaciones automáticamente al abrir la app</p>
+          </div>
+          <button type="button"
+            onClick={() => { changeAutoCheckUpdates(!autoCheckUpdates); toast({ title: !autoCheckUpdates ? "Chequeo automático activado ✓" : "Chequeo automático desactivado" }); }}
+            data-testid="auto-check-toggle"
+            role="switch"
+            aria-checked={autoCheckUpdates}
+            className={`relative w-12 h-6 rounded-full transition-all flex-shrink-0 ${autoCheckUpdates ? "btn-primary" : "bg-slate-200"}`}>
+            <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${autoCheckUpdates ? "left-[26px]" : "left-0.5"}`} />
+          </button>
+        </div>
+
+        {/* Check result */}
+        <AnimatePresence mode="wait">
+          {ghResult?.has_updates && (
+            <motion.div key="gh-update"
+              initial={{ opacity: 0, scale: 0.92, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+              data-testid="github-update-available-banner"
+              className="relative overflow-hidden rounded-3xl p-5 mt-4 text-white"
+              style={{ background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #db2777 100%)" }}>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 relative z-10">
+                <motion.div animate={{ rotate: 360 }} transition={{ duration: 6, repeat: Infinity, ease: "linear" }}
+                  className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                  <RefreshCw size={26} />
+                </motion.div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-lg font-black leading-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
+                    Nueva versión disponible{ghResult.remote_version ? `: v${ghResult.remote_version}` : ""}
+                  </p>
+                  <p className="text-sm text-white/85">
+                    {ghResult.commits_ahead
+                      ? `${ghResult.commits_ahead} cambio(s) nuevo(s) en la rama ${ghResult.branch || "main"}.`
+                      : "Hay una versión nueva en GitHub."}
+                    {ghResult.local_version ? ` Tienes v${ghResult.local_version}.` : ""}
+                  </p>
+                </div>
+                <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+                  onClick={handleApplyGithub}
+                  disabled={ghApplying}
+                  data-testid="apply-github-update-btn"
+                  className="flex items-center justify-center gap-1.5 bg-white text-indigo-700 hover:bg-white/90 px-5 py-2.5 rounded-full text-xs font-black transition-colors flex-shrink-0 disabled:opacity-60">
+                  {ghApplying
+                    ? <><Loader2 size={14} className="animate-spin" /> Aplicando…</>
+                    : <><ArrowDownCircle size={14} /> Aplicar ahora</>}
+                </motion.button>
+              </div>
+            </motion.div>
+          )}
+          {(checkResult?.status === "latest" || checkResult?.status === "installed") && (
+            <motion.div key="latest"
+              initial={{ opacity: 0, scale: 0.92, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+              data-testid="up-to-date-banner"
+              className="relative overflow-hidden rounded-3xl p-5 mt-4 text-white"
+              style={{ background: "linear-gradient(135deg, #059669, #10b981 60%, #34d399)" }}>
+              <motion.div className="absolute -right-8 -top-8 w-44 h-44 rounded-full border-4 border-white/20"
+                animate={{ scale: [1, 1.35, 1], opacity: [0.5, 0.12, 0.5] }} transition={{ duration: 2.6, repeat: Infinity }} />
+              <motion.div className="absolute -right-2 -top-2 w-24 h-24 rounded-full border-4 border-white/25"
+                animate={{ scale: [1, 1.5, 1], opacity: [0.6, 0.15, 0.6] }} transition={{ duration: 2.6, repeat: Infinity, delay: 0.5 }} />
+              <div className="flex items-center gap-4 relative z-10">
+                <motion.div
+                  animate={{ rotate: [0, 8, -8, 0], scale: [1, 1.06, 1] }}
+                  transition={{ duration: 2, repeat: Infinity }}
+                  className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                  <CheckCircle2 size={30} />
+                </motion.div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-lg sm:text-xl font-black leading-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
+                    {checkResult.status === "installed" ? "¡Versión nueva instalada! 🎉" : "¡Ya tienes la versión más actual! ✓"}
+                  </p>
+                  <p className="text-sm text-white/85">
+                    {checkResult.status === "installed"
+                      ? "El código se actualizó. Reiniciando la app…"
+                      : `Tu app está al día con GitHub${checkResult.version ? ` — v${checkResult.version}` : ""}`}
+                  </p>
+                  {checkResult.status === "installed" && ghProgress && (ghProgress.stage === "downloading" || ghProgress.stage === "starting") && (
+                    <div className="mt-3" data-testid="updates-page-progress">
+                      <div className="flex items-center justify-between mb-1.5 text-xs font-semibold text-white/90">
+                        <span className="flex items-center gap-1.5">
+                          <Download size={13} /> Descargando {ghProgress.name || "actualización"}…
+                        </span>
+                        <span data-testid="updates-page-progress-percent" className="tabular-nums">{ghProgress.percent || 0}%</span>
+                      </div>
+                      <div className="h-2.5 w-full rounded-full bg-white/25 overflow-hidden">
+                        <motion.div
+                          className="h-full rounded-full bg-white"
+                          initial={{ width: 0 }}
+                          animate={{ width: `${ghProgress.percent || 0}%` }}
+                          transition={{ ease: "easeOut", duration: 0.3 }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <motion.div animate={{ y: [0, -5, 0], rotate: [0, 12, 0] }} transition={{ duration: 1.8, repeat: Infinity }}
+                  className="hidden sm:block flex-shrink-0">
+                  <Sparkles size={26} className="text-white/70" />
+                </motion.div>
+              </div>
+            </motion.div>
+          )}
+          {checkResult?.status === "desktop_update" && (
+            <motion.div key="desktop-update"
+              initial={{ opacity: 0, scale: 0.92, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+              data-testid="desktop-update-banner"
+              className="relative overflow-hidden rounded-3xl p-5 mt-4 text-white"
+              style={{ background: "linear-gradient(135deg, #0ea5e9, #6366f1)" }}>
+              <div className="flex items-center gap-4 relative z-10">
+                <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                  <Download size={26} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-lg font-black leading-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
+                    Hay una versión nueva en GitHub
+                  </p>
+                  <p className="text-sm text-white/85">
+                    {checkResult.message || "Descarga el paquete de nuevo (Ajustes → App de escritorio) para actualizar."}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+          {checkResult?.status === "update" && (
+            <motion.div key="update"
+              initial={{ opacity: 0, scale: 0.92, y: -8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+              data-testid="update-available-banner"
+              className="relative overflow-hidden rounded-3xl p-5 mt-4 text-white"
+              style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)" }}>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4 relative z-10">
+                <motion.div animate={{ rotate: 360 }} transition={{ duration: 6, repeat: Infinity, ease: "linear" }}
+                  className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                  <RefreshCw size={26} />
+                </motion.div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-lg font-black leading-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
+                    Nueva versión disponible: v{checkResult.remote_version}
+                  </p>
+                  <p className="text-sm text-white/80">
+                    {checkResult.notes || "Descárgala para actualizar tu app de escritorio"}
+                  </p>
+                </div>
+                <a href={checkResult.download_url || (checkResult.id ? getUpdateDownloadUrl(checkResult.id) : "#")}
+                  target="_blank" rel="noreferrer" data-testid="download-update-banner-btn"
+                  className="flex items-center justify-center gap-1.5 bg-white/20 hover:bg-white/30 px-5 py-2.5 rounded-full text-xs font-bold transition-colors flex-shrink-0">
+                  <Download size={14} /> Descargar
+                </a>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+
+
+      {/* History */}
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+        className="glass rounded-3xl overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/30">
+          <h2 className="text-sm font-black text-slate-700" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
+            Historial de versiones
+          </h2>
+          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">
+            {history.length} versiones
+          </span>
+        </div>
+
+        {loadingHistory ? (
+          <div className="p-6 space-y-3">
+            {[...Array(2)].map((_, i) => <div key={i} className="h-14 glass rounded-2xl animate-pulse" />)}
+          </div>
+        ) : history.length === 0 ? (
+          <div className="py-16 text-center">
+            <Package size={36} className="mx-auto text-slate-200 mb-3 animate-float" />
+            <p className="text-slate-400 text-sm font-medium">Aún no hay versiones registradas</p>
+            <p className="text-slate-300 text-xs mt-1">Ve a <strong>Ajustes → App para Windows</strong> y descarga la app — se registrará automáticamente aquí</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-white/20">
+            {(showAllHistory ? history : history.slice(0, 5)).map((v, idx) => (
+              <motion.div key={v.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.04 }}
+                className="flex items-center gap-4 px-6 py-4 hover:bg-white/20 transition-colors"
+                data-testid={`update-row-${v.id}`}>
+
+                {/* Version */}
+                <div className="flex items-center gap-2 w-32 flex-shrink-0">
+                  <span className="text-base font-black text-slate-900" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>v{v.version}</span>
+                  {v.is_latest && (
+                    <span className="flex items-center gap-1 text-[9px] font-black px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                      <CheckCircle2 size={9} /> ACTIVA
+                    </span>
+                  )}
+                </div>
+
+                {/* Channel */}
+                <span className={`text-[10px] font-black px-2.5 py-1 rounded-full flex-shrink-0 ${CHANNEL_STYLES[v.channel] || CHANNEL_STYLES.stable}`}>
+                  {CHANNEL_LABELS[v.channel] || v.channel}
+                </span>
+
+                {/* Filename */}
+                <p className="text-xs text-slate-500 font-medium truncate flex-1 min-w-0">{v.filename}</p>
+
+                {/* Size */}
+                <span className="text-xs text-slate-400 font-medium flex-shrink-0 hidden sm:block">{formatBytes(v.file_size)}</span>
+
+                {/* Date */}
+                <span className="text-xs text-slate-400 flex-shrink-0 hidden md:block">{formatDate(v.created_at)}</span>
+
+                {/* Notes */}
+                {v.notes && (
+                  <span className="text-xs text-slate-400 italic truncate max-w-[130px] hidden lg:block">{v.notes}</span>
+                )}
+
+                {/* Actions */}
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <a href={getUpdateDownloadUrl(v.id)} target="_blank" rel="noreferrer" data-testid={`download-btn-${v.id}`}>
+                    <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                      className="p-2 rounded-xl hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 transition-colors" title="Descargar">
+                      <Download size={14} />
+                    </motion.button>
+                  </a>
+                  {!v.is_latest && (
+                    <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                      onClick={() => handleSetLatest(v.id)} data-testid={`set-latest-btn-${v.id}`}
+                      className="p-2 rounded-xl hover:bg-amber-50 text-slate-400 hover:text-amber-600 transition-colors" title="Marcar como activa">
+                      <Star size={14} />
+                    </motion.button>
+                  )}
+                  <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                    onClick={() => handleDelete(v.id)} data-testid={`delete-update-btn-${v.id}`}
+                    className="p-2 rounded-xl hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors" title="Eliminar">
+                    <Trash2 size={14} />
+                  </motion.button>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+
+        {!loadingHistory && history.length > 5 && (
+          <div className="px-6 py-4 border-t border-white/30 flex justify-center">
+            <motion.button
+              whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
+              onClick={() => setShowAllHistory(s => !s)}
+              data-testid="toggle-history-btn"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 transition-all">
+              {showAllHistory
+                ? <>Ver menos <ArrowRight size={14} className="rotate-[-90deg]" /></>
+                : <>Ver todas ({history.length}) <ArrowRight size={14} className="rotate-90" /></>}
+            </motion.button>
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+}

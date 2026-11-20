@@ -204,8 +204,8 @@ def do_uninstall(wipe: bool) -> bool:
     start = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Cinema Reservas"
     paths = [_desktop() / "Cinema Reservas.lnk",
              Path(os.environ.get("USERPROFILE", "")) / "Desktop" / "Cinema Reservas.lnk",
-             start, HOME / "python", HOME / Path(sys.executable).name, HOME / "icono.ico",
-             HOME / "version.txt"]
+             start, HOME / "python", HOME / Path(sys.executable).name, HOME / "_lanzador",
+             HOME / "icono.ico", HOME / "version.txt"]
     paths += [HOME] if wipe else [HOME / "app" / "build", HOME / "ventana.json"]
     q = ps_quote
     me, parent, exe = os.getpid(), os.getppid(), str(Path(sys.executable).resolve())

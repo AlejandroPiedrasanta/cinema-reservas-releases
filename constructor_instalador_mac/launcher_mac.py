@@ -212,6 +212,14 @@ def uitest(out_dir: str) -> int:
             h1 = w.evaluate_js("document.querySelector('h1') && document.querySelector('h1').textContent")
             paso("pantalla de licencia", h1 == "Activa tu licencia", h1)
             paso("botones estilo Mac", w.evaluate_js("document.documentElement.classList.contains('is-mac')"))
+            try:
+                import plistlib
+                info = plistlib.loads((Path(sys.executable).resolve().parent.parent / "Info.plist").read_bytes())
+                paso("nombre y version de la app", info.get("CFBundleName") == "Cinema Reservas"
+                     and info.get("CFBundleShortVersionString") == version(),
+                     "%s %s" % (info.get("CFBundleName"), info.get("CFBundleShortVersionString")))
+            except Exception as e:
+                paso("nombre y version de la app", False, repr(e))
             paso("estilos cargados", w.evaluate_js(
                 "getComputedStyle(document.querySelector('#lic-go')).borderRadius !== '0px'"))
             w.evaluate_js("document.querySelector('#lic-key').value='otra-clave-mala'; document.querySelector('#lic-go').click()")

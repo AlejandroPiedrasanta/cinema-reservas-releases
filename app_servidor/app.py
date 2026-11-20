@@ -540,6 +540,9 @@ class ReservationCreate(BaseModel):
     status: str = "Pendiente"
     notes: Optional[str] = None
     package_type: Optional[str] = None
+    # el formulario permite elegir socio (y ubicaciones) ya al crear: antes se descartaban
+    assigned_partners: Optional[list] = None
+    locations: Optional[list] = None
 
     @field_validator("client_name")
     @classmethod
@@ -771,6 +774,9 @@ async def list_reservations():
 @api_router.post("/reservations", status_code=201)
 async def create_reservation(reservation: ReservationCreate):
     doc = reservation.model_dump()
+    doc["assigned_partners"] = doc.get("assigned_partners") or []
+    if doc.get("locations") is None:
+        doc.pop("locations", None)
     doc["receipt_images"] = []
     doc["created_at"] = datetime.now(timezone.utc).isoformat()
     result = await db.reservations.insert_one(doc)
@@ -799,7 +805,12 @@ async def update_reservation(reservation_id: str, reservation: ReservationUpdate
         oid = ObjectId(reservation_id)
     except Exception:
         raise HTTPException(status_code=400, detail="ID inválido")
-    update_data = {k: v for k, v in reservation.model_dump().items() if v is not None}
+    # Solo los campos que se enviaron. Un campo enviado vacio (null) se BORRA (antes se
+    # ignoraba y la pantalla decia "guardado" aunque el dato volvia). Los obligatorios no.
+    update_data = reservation.model_dump(exclude_unset=True)
+    for k in ("client_name", "event_type", "event_date", "total_amount", "advance_paid", "status"):
+        if update_data.get(k, "x") is None:
+            update_data.pop(k)
     if not update_data:
         raise HTTPException(status_code=400, detail="Sin datos para actualizar")
     if "advance_paid" in update_data or "total_amount" in update_data:
@@ -898,7 +909,10 @@ async def export_reservations(format: str = "csv"):
 async def get_calendar_events():
     docs = await db.reservations.find(
         {"status": {"$nin": ["Cancelado"]}},
-        {"client_name": 1, "event_date": 1, "event_type": 1, "status": 1, "_id": 1}
+        # el calendario muestra hora, lugar, total y saldo: antes llegaban vacios
+        {"client_name": 1, "event_date": 1, "event_type": 1, "status": 1, "_id": 1,
+         "event_time": 1, "venue": 1, "total_amount": 1, "advance_paid": 1, "guests_count": 1,
+         "package_type": 1, "client_phone": 1}
     ).to_list(None)
     return [doc_to_dict(d) for d in docs]
 
@@ -907,7 +921,8 @@ async def get_calendar_events():
 
 @api_router.get("/socios")
 async def list_socios():
-    docs = await db.socios.find({}, {"photo": 0, "photo_content_type": 0}).to_list(None)
+    # incluye la foto: las pantallas de socios la muestran desde esta lista
+    docs = await db.socios.find({}).to_list(None)
     return [doc_to_dict(d) for d in docs]
 
 
@@ -942,7 +957,11 @@ async def update_socio(socio_id: str, socio: SocioUpdate):
         oid = ObjectId(socio_id)
     except Exception:
         raise HTTPException(status_code=400, detail="ID inválido")
-    update_data = {k: v for k, v in socio.model_dump().items() if v is not None}
+    # Campos enviados vacios (null) se borran (email, telefono, notas, tarifa); el nombre no.
+    update_data = socio.model_dump(exclude_unset=True)
+    for k in ("name", "role"):
+        if update_data.get(k, "x") is None:
+            update_data.pop(k)
     if not update_data:
         raise HTTPException(status_code=400, detail="Sin datos para actualizar")
     result = await db.socios.update_one({"_id": oid}, {"$set": update_data})
@@ -5502,6 +5521,22 @@ async def _validation_error_es(request, exc: RequestValidationError):
                                                   "errors": jsonable_encoder(exc.errors())})
 
 
+from starlette.exceptions import HTTPException as _StarletteHTTPException  # noqa: E402
+from fastapi.exception_handlers import http_exception_handler as _default_http_handler  # noqa: E402
+
+
+@app.exception_handler(_StarletteHTTPException)
+async def _http_error_es(request, exc):
+    """Las funciones de la version en la nube que no existen en escritorio respondian
+    "Not Found" en ingles y la pantalla lo mostraba tal cual."""
+    if exc.status_code == 404 and exc.detail == "Not Found" and request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=404,
+                            content={"detail": "Esta función no está disponible en la versión de escritorio."})
+    if exc.status_code == 405 and request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=405, content={"detail": "Operación no permitida."})
+    return await _default_http_handler(request, exc)
+
+
 _UPDATE_PATHS = ("/api/updates/apply-and-restart", "/api/github/apply-update")
 
 
@@ -5638,7 +5673,8 @@ if BUILD_DIR is not None:
         # Nunca devolver HTML para rutas de API desconocidas (causaría que el
         # frontend interprete HTML como JSON → pantalla en blanco).
         if path.startswith("api/") or path == "api":
-            return JSONResponse({"detail": "Not Found"}, status_code=404)
+            return JSONResponse({"detail": "Esta función no está disponible en la versión de escritorio."},
+                                status_code=404)
         f = BUILD_DIR / path
         if f.exists() and f.is_file():
             # sw.js e index.html: no cachear para poder actualizar en caliente.
