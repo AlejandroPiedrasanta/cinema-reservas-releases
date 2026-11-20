@@ -2117,3 +2117,10 @@ html.cp-quiet *, html.cp-quiet *::before, html.cp-quiet *::after {
 [data-dark="true"] .cp-rf .border-emerald-200 { border-color: rgba(16,185,129,0.3) !important; }
 [data-dark="true"] .cp-rf .text-amber-700 { color: #fcd34d !important; }
 [data-dark="true"] .cp-rf .text-emerald-700 { color: #6ee7b7 !important; }
+
+/* Slider de tipos de evento: sin barra de desplazamiento */
+.cp-rf-slider::-webkit-scrollbar { display: none; }
+
+/* Formulario de reserva: campo obligatorio que falta */
+.cp-rf-err .cp-rf-input { border-color: #fb7185 !important; box-shadow: 0 0 0 4px rgba(244, 63, 94, 0.12) !important; }
+.cp-rf-err > p:first-child { color: #e11d48 !important; }

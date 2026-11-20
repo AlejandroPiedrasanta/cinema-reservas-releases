@@ -5,7 +5,7 @@ import {
   ArrowLeft, X, Sparkles, User, Phone, Mail, Calendar as CalIcon, Clock, MapPin,
   Users, DollarSign, Package, StickyNote, PartyPopper, Heart, Cake, Briefcase,
   Mic2, Star, CheckCircle2, Loader2, Wallet, Tag, Pencil, RotateCcw, Zap,
-  Camera, Video, Check, AlertTriangle, Plus, Trash2, Copy, ChevronLeft, ChevronRight, ChevronDown
+  Camera, Video, Check, AlertTriangle, Plus, Trash2, Copy, Sun, Sunrise, Moon, Sunset, ChevronLeft, ChevronRight, ChevronDown
 } from "lucide-react";
 import { motion, AnimatePresence, MotionConfig, animate as fmAnimate } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
@@ -19,7 +19,6 @@ const EVENT_TYPES = [
   { key: "Quinceañera",        icon: Cake,        grad: "from-fuchsia-400 to-purple-500" },
   { key: "Fiesta Social",      icon: PartyPopper, grad: "from-amber-400 to-orange-500" },
   { key: "Evento Corporativo", icon: Briefcase,   grad: "from-cyan-400 to-blue-500" },
-  { key: "Conferencia",        icon: Mic2,        grad: "from-emerald-400 to-teal-500" },
   { key: "Otro",               icon: Star,        grad: "from-slate-300 to-slate-500" },
 ];
 
@@ -70,6 +69,19 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
   const [locs, setLocs] = useState({ maquillaje: "", ceremonia: "", fiesta: "" });
   const [showLocs, setShowLocs] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [errors, setErrors] = useState([]);   // campos obligatorios que faltaron al guardar
+  const [shake, setShake] = useState(0);
+  const [done, setDone] = useState(false);    // animación de «¡Reserva creada!»
+
+  // Borrador: si cierras sin querer, la reserva a medias se guarda y la recuperas al volver
+  const DRAFT_KEY = "cp_reserva_borrador";
+  const [draftOffer, setDraftOffer] = useState(() => {
+    if (reservation) return null;
+    try {
+      const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null");
+      return d && d.form && (d.form.client_name || d.form.event_date || d.form.total_amount) ? d : null;
+    } catch { return null; }
+  });
 
   // Cargar socios (solo en modo creación; en edición ya se gestiona desde Socios.jsx)
   useEffect(() => {
@@ -173,11 +185,18 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
 
   const handleSubmit = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
-    if (!form.client_name.trim()) { toast({ title: "Nombre requerido", variant: "destructive" }); return; }
-    if (!form.event_date)         { toast({ title: "Fecha requerida",  variant: "destructive" }); return; }
-    if (!form.total_amount || isNaN(Number(form.total_amount))) {
-      toast({ title: "Monto inválido", variant: "destructive" }); return;
+    if (saving || done) return;
+    const missing = [];
+    if (!form.client_name.trim()) missing.push("client_name");
+    if (!form.event_date) missing.push("event_date");
+    if (!form.total_amount || isNaN(Number(form.total_amount))) missing.push("total_amount");
+    if (missing.length) {
+      const names = { client_name: "Cliente", event_date: "Fecha", total_amount: "Monto total" };
+      setErrors(missing); setShake((n) => n + 1);
+      toast({ title: "Faltan datos", description: `Completa: ${missing.map((k) => names[k]).join(", ")}`, variant: "destructive" });
+      return;
     }
+    setErrors([]);
     setSaving(true);
     const payload = {
       ...form,
@@ -225,6 +244,10 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
         await createReservation(payload);
         toast({ title: "🎉 ¡Reserva creada!" });
         celebrateReservation();
+        try { localStorage.removeItem(DRAFT_KEY); } catch { /* nada */ }
+        setDone(true);
+        setTimeout(() => onSaved(), 700);
+        return;
       }
       onSaved();
     } catch (err) {
@@ -267,12 +290,37 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
     return [...seen.entries()].map(([name, v]) => ({ name, ...v }));
   }, [others]);
 
+  const meaningful = !!(form.client_name.trim() || form.event_date || form.total_amount);
+  useEffect(() => {
+    if (isEdit || done) return;
+    if (!meaningful) return;
+    if (draftOffer) setDraftOffer(null);   // empezó una nueva: el borrador viejo se reemplaza
+    const id = setTimeout(() => {
+      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ form, team, at: Date.now() })); } catch { /* sin espacio */ }
+    }, 400);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form, team, isEdit, done]);
+  const restoreDraft = () => {
+    if (!draftOffer) return;
+    setForm((p) => ({ ...p, ...draftOffer.form }));
+    setTeam(Array.isArray(draftOffer.team) ? draftOffer.team : []);
+    setDraftOffer(null);
+  };
+  const discardDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch { /* nada */ } setDraftOffer(null); };
+  const closeForm = () => {
+    if (!isEdit && !done && meaningful) toast({ title: "Borrador guardado", description: "Lo recuperas al abrir Nueva reserva." });
+    onClose();
+  };
+
   // Atajos: Esc cierra · Ctrl+Enter guarda
   const submitRef = useRef(handleSubmit);
   submitRef.current = handleSubmit;
+  const closeRef = useRef(null);
+  closeRef.current = closeForm;
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "Escape" && !document.querySelector("[data-partner-popup],[data-rf-popup]")) onClose();
+      if (e.key === "Escape" && !document.querySelector("[data-partner-popup],[data-rf-popup]")) closeRef.current();
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submitRef.current(); }
     };
     window.addEventListener("keydown", onKey);
@@ -294,6 +342,8 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
     { k: "total", label: "Monto", ok: totalNum > 0 },
   ];
   const allReady = reqDone.every((r) => r.ok);
+  const filledMap = { client_name: !!form.client_name.trim(), event_date: !!form.event_date, total_amount: !!form.total_amount && !isNaN(Number(form.total_amount)) };
+  const errOn = (k) => errors.includes(k) && !filledMap[k];
   const teamCost = team.reduce((acc, m) => acc + (m.socio_id ? (parseFloat(m.payment) || 0) : 0), 0);
   const profit = totalNum - teamCost;
   const countdown = form.event_date ? relDays(form.event_date) : "";
@@ -305,7 +355,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
     const lines = [
       `¡Hola ${form.client_name.trim()}! Te confirmamos tu reserva:`,
       `🎉 ${getEventTypeName(form.event_type)}${form.package_type ? ` · Paquete ${form.package_type}` : ""}`,
-      `📅 ${fechaLarga(form.event_date)}${form.event_time ? ` a las ${form.event_time}` : ""}`,
+      `📅 ${fechaLarga(form.event_date)}${form.event_time ? ` a las ${to12(form.event_time)}` : ""}`,
       form.venue && `📍 ${form.venue}`,
       `💰 Total: ${formatCurrency(totalNum)}`,
       `✅ Anticipo: ${formatCurrency(advNum)}`,
@@ -332,7 +382,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         transition={{ duration: 0.18 }}
         className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto py-6 px-4 bg-slate-900/40"
-        onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+        onClick={(e) => { if (e.target === e.currentTarget) closeForm(); }}
         data-testid="reservation-form"
       >
         <motion.div
@@ -343,7 +393,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
           className="cp-rf relative w-full max-w-5xl my-auto flex flex-col rounded-[28px] bg-white border border-white shadow-[0_30px_80px_-24px_rgba(15,23,42,0.45)]"
           onClick={(e) => e.stopPropagation()}
         >
-          <button type="button" onClick={onClose} aria-label="Cerrar" data-testid="cancel-form-btn"
+          <button type="button" onClick={closeForm} aria-label="Cerrar" data-testid="cancel-form-btn"
             className="absolute top-5 right-5 z-20 w-9 h-9 rounded-full grid place-items-center text-slate-400 hover:bg-slate-200/70 hover:text-slate-700 hover:rotate-90 transition-transform duration-300">
             <X size={18} />
           </button>
@@ -397,40 +447,34 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                 </motion.div>
               )}
 
+              <AnimatePresence>
+                {draftOffer && (
+                  <motion.div key="draft" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden" data-testid="draft-banner">
+                    <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3">
+                      <RotateCcw size={16} className="text-violet-600 shrink-0" />
+                      <p className="flex-1 min-w-0 text-xs text-violet-900">
+                        <b>Tienes una reserva sin terminar</b>
+                        <span className="text-violet-700"> · {[draftOffer.form.client_name, draftOffer.form.event_type, draftOffer.form.event_date && fechaCorta(draftOffer.form.event_date)].filter(Boolean).join(" · ")}</span>
+                      </p>
+                      <button type="button" onClick={discardDraft} className="text-[11px] font-bold text-violet-500 hover:text-violet-800">Descartar</button>
+                      <button type="button" onClick={restoreDraft} data-testid="draft-restore"
+                        className="px-3 h-8 rounded-lg text-[11px] font-black text-white bg-violet-600 hover:bg-violet-700">Recuperar</button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <motion.div variants={ITEM}>
                 <RLabel>{noReq(f.eventType) || "Tipo de evento"}</RLabel>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {EVENT_TYPES.map((t) => {
-                    const c = getEventConfig(t.key); const Icon = c.icon || t.icon;
-                    const active = form.event_type === t.key;
-                    return (
-                      <motion.button key={t.key} type="button" whileTap={{ scale: 0.95 }} whileHover={{ y: -1 }}
-                        onClick={() => setForm((p) => ({ ...p, event_type: t.key }))}
-                        data-testid={`event-type-${t.key.toLowerCase().replace(/\s/g, "-")}`}
-                        className={`relative flex items-center justify-center rounded-2xl border px-2 py-2 text-[11px] font-bold leading-tight text-center transition-colors ${active ? "border-transparent" : "border-slate-200 text-slate-500 hover:border-slate-300"}`}
-                        style={active ? { color: c.fg } : undefined}>
-                        {active && (
-                          <motion.span layoutId="rf-type-pill" className="absolute inset-0 rounded-2xl"
-                            style={{ background: `${c.fg}14`, border: `1.5px solid ${c.fg}`, boxShadow: `0 0 0 3px ${c.fg}22` }}
-                            transition={{ type: "spring", stiffness: 480, damping: 34 }} />
-                        )}
-                        <span className="relative z-10 flex items-center gap-1.5">
-                          <motion.span className="flex" animate={active ? { rotate: [0, -14, 10, 0], scale: [1, 1.25, 1] } : { rotate: 0, scale: 1 }} transition={{ duration: 0.45 }}>
-                            <Icon size={14} className="shrink-0" />
-                          </motion.span>
-                          <span>{getEventTypeName(t.key)}</span>
-                        </span>
-                      </motion.button>
-                    );
-                  })}
-                </div>
+                <EventTypeSlider value={form.event_type} onChange={(k) => setForm((p) => ({ ...p, event_type: k }))} />
                 <select value={form.event_type} onChange={set("event_type")} data-testid="input-event-type" className="hidden">
                   {EVENT_TYPES.map((t) => <option key={t.key} value={t.key}>{getEventTypeName(t.key)}</option>)}
                 </select>
               </motion.div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <RField label={noReq(f.clientName)} req dirty={isDirtyField("client_name")} testId="field-client-name">
+                <RField label={noReq(f.clientName)} req dirty={isDirtyField("client_name")} testId="field-client-name" error={errOn("client_name")} shake={shake}>
                   <ClientAutocomplete value={form.client_name} clients={clients}
                     onChange={(v) => setForm((p) => ({ ...p, client_name: v }))}
                     onPick={(c) => setForm((p) => ({ ...p, client_name: c.name, client_phone: p.client_phone || c.phone, client_email: p.client_email || c.email }))} />
@@ -445,32 +489,25 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                 </RField>
                 {ff.phone !== false && (
                   <RField label={f.phone} dirty={isDirtyField("client_phone")} testId="field-phone">
-                    <RInput icon={Phone} value={form.client_phone} onChange={set("client_phone")} placeholder="5555 1234" data-testid="input-phone" />
+                    <RInput icon={Phone} type="tel" inputMode="tel" value={form.client_phone} onChange={(e) => setForm((p) => ({ ...p, client_phone: formatPhone(e.target.value) }))} placeholder="5555 1234" data-testid="input-phone" />
                   </RField>
                 )}
-                <RField label={noReq(f.eventDate)} req dirty={isDirtyField("event_date")} testId="field-date">
+                <RField label={noReq(f.eventDate)} req dirty={isDirtyField("event_date")} testId="field-date" error={errOn("event_date")} shake={shake}>
                   <RDateField value={form.event_date} busy={busy} onChange={(v) => setForm((p) => ({ ...p, event_date: v }))} />
                   <input type="date" value={form.event_date} onChange={set("event_date")} required data-testid="input-event-date" className="hidden" />
                 </RField>
                 {ff.time !== false && (
                   <RField label={f.time} dirty={isDirtyField("event_time")} testId="field-time">
-                    <RInput icon={Clock} type="time" value={form.event_time} onChange={set("event_time")} data-testid="input-event-time" />
+                    <RTimeField value={form.event_time} onChange={(v) => setForm((p) => ({ ...p, event_time: v }))} />
+                    <input type="time" value={form.event_time} onChange={set("event_time")} data-testid="input-event-time" className="hidden" />
                   </RField>
                 )}
                 {ff.venue !== false && (
+                  <div className="md:col-span-2">
                   <RField label={f.venue} dirty={isDirtyField("venue")} testId="field-venue">
                     <RInput icon={MapPin} value={form.venue} onChange={set("venue")} placeholder="Salón, hotel o dirección" data-testid="input-venue" />
                   </RField>
-                )}
-                {ff.email !== false && (
-                  <RField label={f.email} dirty={isDirtyField("client_email")} testId="field-email">
-                    <RInput icon={Mail} type="email" value={form.client_email} onChange={set("client_email")} placeholder="correo@email.com" data-testid="input-email" />
-                  </RField>
-                )}
-                {ff.guests !== false && (
-                  <RField label={f.guests} dirty={isDirtyField("guests_count")} testId="field-guests">
-                    <RInput icon={Users} type="number" min="0" value={form.guests_count} onChange={set("guests_count")} placeholder="150" data-testid="input-guests" />
-                  </RField>
+                  </div>
                 )}
               </div>
 
@@ -480,13 +517,13 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                     initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0, x: [0, -6, 6, -3, 3, 0] }} exit={{ opacity: 0, y: -4 }}
                     transition={{ duration: 0.45 }}
                     className="cp-rf-note flex items-center gap-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-                    <AlertTriangle size={14} className="shrink-0" /> Ese día ya tienes {sameDay.length === 1 ? `1 evento (${sameDay[0].client_name})` : `${sameDay.length} eventos`}<span className="ml-auto font-bold opacity-80 whitespace-nowrap">{countdown}</span>
+                    <AlertTriangle size={14} className="shrink-0" /> Ese día ya tienes {sameDay.length === 1 ? `1 evento (${sameDay[0].client_name})` : `${sameDay.length} eventos`}
                   </motion.p>
                 ) : (
                   <motion.p key={"free" + form.event_date}
                     initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.22 }}
                     className="cp-rf-note flex items-center gap-2 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
-                    <motion.span className="flex" initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 500, damping: 18, delay: 0.08 }}><CheckCircle2 size={14} /></motion.span> Día libre, no tienes otros eventos<span className="ml-auto font-bold opacity-80 whitespace-nowrap">{countdown}</span>
+                    <motion.span className="flex" initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 500, damping: 18, delay: 0.08 }}><CheckCircle2 size={14} /></motion.span> Día libre, no tienes otros eventos
                   </motion.p>
                 ))}
               </AnimatePresence>
@@ -568,41 +605,8 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                 </motion.div>
               )}
 
-              {/* Lugares extra */}
-              {!isEdit && (
-                <motion.div variants={ITEM}>
-                  <button type="button" onClick={() => setShowLocs((v) => !v)} data-testid="locs-toggle"
-                    className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors">
-                    <motion.span className="flex" animate={{ rotate: showLocs ? 90 : 0 }}><ChevronRight size={14} /></motion.span>
-                    Más lugares (maquillaje, ceremonia, fiesta)
-                    {locCount > 0 && <span className="px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 text-[10px]">{locCount}</span>}
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {showLocs && (
-                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.25 }} className="overflow-hidden">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-3">
-                          {LOC_TYPES.map((l) => (
-                            <div key={l.key}>
-                              <RLabel>{l.emoji} {l.label}</RLabel>
-                              <RInput icon={MapPin} value={locs[l.key]} onChange={(e) => setLocs((x) => ({ ...x, [l.key]: e.target.value }))}
-                                placeholder="Dirección o link de Maps" data-testid={`loc-${l.key}`} />
-                            </div>
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </motion.div>
-              )}
 
-              {/* Notas */}
-              <motion.div variants={ITEM}>
-                <RLabel>Notas</RLabel>
-                <textarea value={form.notes} onChange={set("notes")} rows={3} data-testid="input-notes"
-                  placeholder="Ej.: llevar dron, la novia llega a las 4 p. m., el resto se paga el día del evento…"
-                  className="cp-rf-input w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-500/10 transition resize-none" />
-              </motion.div>
+              <input value={form.notes} onChange={set("notes")} data-testid="input-notes" className="hidden" />
             </motion.form>
 
             {/* Columna derecha: el dinero */}
@@ -618,7 +622,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
               </div>
               <div className="md:sticky md:top-2 flex flex-col gap-4">
               <motion.p variants={ITEM} className="relative text-[11px] font-black uppercase tracking-wider text-slate-500 h-9 flex items-center">Pago</motion.p>
-              <RField label={noReq(f.totalAmount)} req dirty={isDirtyField("total_amount")} testId="field-total">
+              <RField label={noReq(f.totalAmount)} req dirty={isDirtyField("total_amount")} testId="field-total" error={errOn("total_amount")} shake={shake}>
                 <RInput icon={CurrencyGlyph} type="number" min="0" step="0.01" value={form.total_amount} onChange={setTotal} placeholder="5000" required data-testid="input-total" />
               </RField>
               {ff.advance !== false && (
@@ -626,6 +630,12 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                   <RField label={f.advancePaid} dirty={isDirtyField("advance_paid")} testId="field-advance">
                     <RInput icon={Wallet} type="number" min="0" step="0.01" value={form.advance_paid} onChange={set("advance_paid")} placeholder="0" data-testid="input-advance" />
                   </RField>
+                  <AnimatePresence>
+                    {totalNum > 0 && advNum > totalNum && (
+                      <motion.p initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                        className="mt-1 text-[11px] font-bold text-rose-500" data-testid="advance-too-high">El anticipo es mayor que el total</motion.p>
+                    )}
+                  </AnimatePresence>
                   <div className="flex gap-1.5 mt-2">
                     {[["25 %", 0.25], ["50 %", 0.5], ["Todo", 1]].map(([l, r]) => {
                       const on = totalNum > 0 && Math.abs(advNum - totalNum * r) < 0.01;
@@ -743,15 +753,25 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                     </span>
                   ))}
                 </div>
-                <motion.button type="button" onClick={handleSubmit} disabled={saving || (isEdit && dirtyFields.length === 0)} data-testid="submit-form-btn"
+                <motion.button type="button" onClick={handleSubmit} disabled={saving || done || (isEdit && dirtyFields.length === 0)} data-testid="submit-form-btn"
                   whileHover={{ y: -2 }} whileTap={{ scale: 0.97 }}
                   animate={{ boxShadow: allReady ? "0 14px 30px -10px rgba(139,92,246,0.65)" : "0 6px 16px -10px rgba(139,92,246,0.4)" }}
-                  className={`w-full flex items-center justify-center gap-2 px-6 h-12 rounded-xl text-sm font-black text-white transition-[filter,opacity] hover:brightness-110 disabled:opacity-50 ${allReady && !saving ? "cp-rf-shine" : ""}`}
-                  style={{ background: "linear-gradient(135deg, var(--t-from,#8b5cf6), var(--t-to,#ec4899))" }}>
-                  {saving ? <Loader2 size={15} className="animate-spin" /> : (
-                    <motion.span className="flex" animate={allReady ? { scale: [1, 1.3, 1], rotate: [0, 12, 0] } : { scale: 1 }} transition={{ duration: 0.5 }}><CheckCircle2 size={15} /></motion.span>
-                  )}
-                  {submitLabel}
+                  className={`w-full flex items-center justify-center gap-2 px-6 h-12 rounded-xl text-sm font-black text-white transition-[filter,opacity,background] hover:brightness-110 ${done ? "" : "disabled:opacity-50"} ${allReady && !saving && !done ? "cp-rf-shine" : ""}`}
+                  style={{ background: done ? "linear-gradient(135deg,#10b981,#34d399)" : "linear-gradient(135deg, var(--t-from,#8b5cf6), var(--t-to,#ec4899))" }}>
+                  <AnimatePresence mode="wait" initial={false}>
+                    {done ? (
+                      <motion.span key="done" className="flex items-center gap-2" initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 500, damping: 18 }}>
+                        <Check size={17} strokeWidth={3.5} /> ¡Reserva creada!
+                      </motion.span>
+                    ) : (
+                      <motion.span key="label" className="flex items-center gap-2" exit={{ opacity: 0, scale: 0.9 }}>
+                        {saving ? <Loader2 size={15} className="animate-spin" /> : (
+                          <motion.span className="flex" animate={allReady ? { scale: [1, 1.3, 1], rotate: [0, 12, 0] } : { scale: 1 }} transition={{ duration: 0.5 }}><CheckCircle2 size={15} /></motion.span>
+                        )}
+                        {submitLabel}
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
                 </motion.button>
                 <p className="text-[11px] text-slate-400 text-center mt-2 hidden sm:block">
                   {allReady ? "Todo listo · Ctrl + Enter para guardar" : "Ctrl + Enter para guardar · Esc para cerrar"}
@@ -765,6 +785,153 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
     </AnimatePresence>
     </MotionConfig>,
     document.body
+  );
+}
+
+
+// ── Tipos de evento en tarjetas deslizables ──
+function EventTypeSlider({ value, onChange }) {
+  const scroller = useRef(null);
+  const cardRefs = useRef({});
+  const drag = useRef({ down: false, x: 0, left: 0, moved: false });
+  const [edges, setEdges] = useState({ left: false, right: true });
+
+  const updateEdges = () => {
+    const el = scroller.current; if (!el) return;
+    setEdges({ left: el.scrollLeft > 4, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
+  };
+  useEffect(() => {
+    updateEdges();
+    const el = scroller.current; if (!el) return;
+    const onWheel = (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && el.scrollWidth > el.clientWidth) {
+        e.preventDefault(); el.scrollBy({ left: e.deltaY, behavior: "auto" });
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("resize", updateEdges);
+    return () => { el.removeEventListener("wheel", onWheel); window.removeEventListener("resize", updateEdges); };
+  }, []);
+  // Lleva la tarjeta elegida al centro
+  useEffect(() => {
+    const el = scroller.current; const card = cardRefs.current[value];
+    if (!el || !card) return;
+    const target = card.offsetLeft - (el.clientWidth - card.clientWidth) / 2;
+    el.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
+  }, [value]);
+
+  const page = (dir) => { const el = scroller.current; if (el) el.scrollBy({ left: dir * el.clientWidth * 0.7, behavior: "smooth" }); };
+  const onPointerDown = (e) => {
+    drag.current = { down: e.pointerType === "mouse", x: e.clientX, left: scroller.current.scrollLeft, moved: false };
+  };
+  const onPointerMove = (e) => {
+    const d = drag.current; if (!d.down) return;
+    const dx = e.clientX - d.x;
+    if (Math.abs(dx) > 5) d.moved = true;
+    if (d.moved) scroller.current.scrollLeft = d.left - dx;
+  };
+  // Al soltar: el clic que sigue a un arrastre se ignora, pero solo ese
+  const endDrag = () => { drag.current.down = false; setTimeout(() => { drag.current.moved = false; }, 0); };
+  const keys = EVENT_TYPES.map((t) => t.key);
+  const onKey = (e) => {
+    const i = keys.indexOf(value);
+    if (e.key === "ArrowRight") { e.preventDefault(); onChange(keys[Math.min(keys.length - 1, i + 1)]); }
+    if (e.key === "ArrowLeft") { e.preventDefault(); onChange(keys[Math.max(0, i - 1)]); }
+  };
+
+  return (
+    <div className="relative -mx-1" data-testid="event-type-slider">
+      <div ref={scroller} onScroll={updateEdges} onKeyDown={onKey}
+        onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerLeave={endDrag}
+        className="cp-rf-slider flex gap-3 overflow-x-auto snap-x snap-mandatory px-1 pt-1.5 pb-3 select-none"
+        style={{
+          scrollbarWidth: "none",
+          WebkitMaskImage: `linear-gradient(90deg, ${edges.left ? "transparent" : "#000"} 0, #000 28px, #000 calc(100% - 28px), ${edges.right ? "transparent" : "#000"} 100%)`,
+          maskImage: `linear-gradient(90deg, ${edges.left ? "transparent" : "#000"} 0, #000 28px, #000 calc(100% - 28px), ${edges.right ? "transparent" : "#000"} 100%)`,
+        }}>
+        {EVENT_TYPES.map((t, idx) => {
+          const c = getEventConfig(t.key); const Icon = c.icon || t.icon;
+          const active = value === t.key;
+          return (
+            <motion.button key={t.key} type="button" ref={(n) => { cardRefs.current[t.key] = n; }}
+              data-testid={`event-type-${t.key.toLowerCase().replace(/\s/g, "-")}`}
+              aria-pressed={active}
+              onClick={() => { if (!drag.current.moved) onChange(t.key); }}
+              initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0, scale: active ? 1 : 0.96 }}
+              transition={{ opacity: { delay: 0.05 * idx }, x: { delay: 0.05 * idx, type: "spring", stiffness: 300, damping: 26 }, scale: { type: "spring", stiffness: 400, damping: 26 } }}
+              whileHover={{ y: -4 }} whileTap={{ scale: 0.94 }}
+              className="relative snap-center shrink-0 w-[138px] h-[104px] rounded-2xl overflow-hidden text-left outline-none focus-visible:ring-4 focus-visible:ring-violet-400/40"
+              style={{
+                background: active ? `linear-gradient(140deg, ${c.fg}, ${c.fg}cc)` : `linear-gradient(140deg, ${c.fg}12, ${c.fg}06)`,
+                border: `1.5px solid ${active ? c.fg : `${c.fg}33`}`,
+                boxShadow: active ? `0 16px 30px -14px ${c.fg}` : "none",
+                color: active ? "#fff" : c.fg,
+              }}>
+              {/* icono grande de fondo */}
+              <motion.span aria-hidden className="absolute -right-3 -bottom-4 flex"
+                animate={{ rotate: active ? -8 : -16, scale: active ? 1.1 : 1, opacity: active ? 0.22 : 0.12 }}
+                transition={{ type: "spring", stiffness: 220, damping: 18 }}>
+                <Icon size={78} strokeWidth={1.6} />
+              </motion.span>
+              {/* brillo al elegir */}
+              <AnimatePresence>
+                {active && (
+                  <motion.span key="shine" aria-hidden className="absolute inset-0"
+                    initial={{ x: "-120%" }} animate={{ x: "120%" }} exit={{ opacity: 0 }} transition={{ duration: 0.7, ease: "easeOut" }}
+                    style={{ background: "linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.35) 50%, transparent 70%)" }} />
+                )}
+              </AnimatePresence>
+              <div className="relative h-full flex flex-col justify-between p-3">
+                <div className="flex items-start justify-between">
+                  <span className="w-9 h-9 rounded-xl grid place-items-center"
+                    style={{ background: active ? "rgba(255,255,255,0.22)" : "#fff", boxShadow: active ? "none" : `0 4px 12px -6px ${c.fg}` }}>
+                    <Icon size={18} />
+                  </span>
+                  <AnimatePresence>
+                    {active && (
+                      <motion.span key="ok" className="w-5 h-5 rounded-full bg-white grid place-items-center"
+                        initial={{ scale: 0, rotate: -90 }} animate={{ scale: 1, rotate: 0 }} exit={{ scale: 0 }}
+                        transition={{ type: "spring", stiffness: 520, damping: 16 }} style={{ color: c.fg }}>
+                        <Check size={12} strokeWidth={3.5} />
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </div>
+                <span className="text-[13px] font-black leading-tight">{getEventTypeName(t.key)}</span>
+              </div>
+            </motion.button>
+          );
+        })}
+      </div>
+      {/* Flechas */}
+      <AnimatePresence>
+        {edges.left && (
+          <motion.button key="l" type="button" onClick={() => page(-1)} aria-label="Ver tipos anteriores"
+            initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }}
+            className="absolute left-0 top-[46%] -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-slate-200 shadow-md grid place-items-center text-slate-600 hover:text-slate-900">
+            <ChevronLeft size={16} />
+          </motion.button>
+        )}
+        {edges.right && (
+          <motion.button key="r" type="button" onClick={() => page(1)} aria-label="Ver más tipos"
+            initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }}
+            className="absolute right-0 top-[46%] -translate-y-1/2 w-8 h-8 rounded-full bg-white border border-slate-200 shadow-md grid place-items-center text-slate-600 hover:text-slate-900">
+            <ChevronRight size={16} />
+          </motion.button>
+        )}
+      </AnimatePresence>
+      {/* Puntos */}
+      <div className="flex justify-center gap-1.5 -mt-0.5">
+        {EVENT_TYPES.map((t) => {
+          const on = value === t.key; const c = getEventConfig(t.key);
+          return (
+            <motion.button key={t.key} type="button" aria-label={getEventTypeName(t.key)} onClick={() => onChange(t.key)}
+              animate={{ width: on ? 18 : 6, backgroundColor: on ? c.fg : "#cbd5e1" }} transition={{ type: "spring", stiffness: 400, damping: 30 }}
+              className="h-1.5 rounded-full" />
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -802,6 +969,13 @@ const STAGGER_RIGHT = {
   hidden: { opacity: 0, x: 28 },
   show: { opacity: 1, x: 0, transition: { type: "spring", stiffness: 260, damping: 30, delay: 0.06, staggerChildren: 0.05, delayChildren: 0.16 } },
 };
+// «Sábado 28 nov» (con el año solo si no es el actual)
+function fechaMedia(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dia = DIAS[new Date(y, m - 1, d).getDay()];
+  const yr = y !== new Date().getFullYear() ? ` ${y}` : "";
+  return `${dia.charAt(0).toUpperCase() + dia.slice(1)} ${d} ${MESES[m - 1].slice(0, 3)}${yr}`;
+}
 function fechaCorta(iso) {
   const [y, m, d] = iso.split("-").map(Number);
   const dia = DIAS[new Date(y, m - 1, d).getDay()].slice(0, 3);
@@ -826,19 +1000,27 @@ function RLabel({ children, req }) {
   return <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">{children}{req && <span className="text-rose-500"> *</span>}</p>;
 }
 
-function RField({ label, req, dirty, testId, children }) {
+function RField({ label, req, dirty, testId, children, error, shake = 0 }) {
   return (
-    <motion.div variants={ITEM} className="relative" data-testid={testId}>
+    <motion.div variants={ITEM} className={`relative ${error ? "cp-rf-err" : ""}`} data-testid={testId}>
       <RLabel req={req}>{label}{dirty && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-amber-500 align-middle" data-testid="dirty-dot" />}</RLabel>
-      {children}
+      <motion.div key={error ? `e${shake}` : "ok"} animate={error ? { x: [0, -7, 7, -4, 4, 0] } : { x: 0 }} transition={{ duration: 0.4 }}>
+        {children}
+      </motion.div>
+      <AnimatePresence>
+        {error && (
+          <motion.p initial={{ opacity: 0, y: -3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+            className="mt-1 text-[11px] font-bold text-rose-500" data-testid={`${testId}-error`}>Falta este dato</motion.p>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
 
 function RInput({ icon: Icon, className = "", ...p }) {
   return (
-    <div className="relative">
-      {Icon && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none flex"><Icon size={15} /></span>}
+    <div className="relative group">
+      {Icon && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-violet-500 transition-colors pointer-events-none flex"><Icon size={15} /></span>}
       <input {...p}
         className={`cp-rf-input w-full h-11 rounded-xl border border-slate-200 bg-white ${Icon ? "pl-9" : "pl-3"} pr-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-500/10 transition ${className}`} />
     </div>
@@ -847,23 +1029,213 @@ function RInput({ icon: Icon, className = "", ...p }) {
 
 function ClientAutocomplete({ value, clients, onChange, onPick }) {
   const [open, setOpen] = useState(false);
+  const [idx, setIdx] = useState(0);
   const q = (value || "").trim().toLowerCase();
   const sug = q ? clients.filter((c) => c.name.toLowerCase().includes(q) && c.name.toLowerCase() !== q).slice(0, 5) : [];
+  const show = open && sug.length > 0;
+  const pick = (c) => { onPick(c); setOpen(false); };
+  const onKeyDown = (e) => {
+    if (!show) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setIdx((i) => (i + 1) % sug.length); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setIdx((i) => (i - 1 + sug.length) % sug.length); }
+    else if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) { e.preventDefault(); pick(sug[Math.min(idx, sug.length - 1)]); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); setOpen(false); }
+  };
+  const mark = (name) => {
+    const i = name.toLowerCase().indexOf(q);
+    if (i < 0 || !q) return name;
+    return <>{name.slice(0, i)}<b className="text-violet-700">{name.slice(i, i + q.length)}</b>{name.slice(i + q.length)}</>;
+  };
   return (
     <div className="relative">
       <RInput icon={User} value={value} placeholder="María García" required data-testid="input-client-name" autoComplete="off"
-        onChange={(e) => { onChange(e.target.value); setOpen(true); }} onBlur={() => setTimeout(() => setOpen(false), 150)} />
-      {open && sug.length > 0 && (
-        <div data-rf-popup className="absolute z-30 mt-1 w-full rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden">
-          <p className="px-3 pt-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Clientes anteriores</p>
-          {sug.map((c) => (
-            <button key={c.name} type="button" onMouseDown={() => { onPick(c); setOpen(false); }}
-              className="w-full flex justify-between gap-2 px-3 py-2 text-sm hover:bg-slate-50 text-left">
-              <span className="text-slate-800 truncate">{c.name}</span><span className="text-slate-400 text-xs shrink-0">{c.phone}</span>
-            </button>
-          ))}
-        </div>
-      )}
+        onKeyDown={onKeyDown}
+        onChange={(e) => { onChange(e.target.value); setOpen(true); setIdx(0); }} onBlur={() => setTimeout(() => setOpen(false), 150)} />
+      <AnimatePresence>
+        {show && (
+          <motion.div data-rf-popup initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.14 }}
+            className="absolute z-30 mt-1 w-full rounded-xl border border-slate-200 bg-white shadow-xl overflow-hidden" data-testid="client-suggestions">
+            <p className="px-3 pt-2 pb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Clientes anteriores <span className="normal-case tracking-normal font-semibold">↑ ↓ y Enter</span>
+            </p>
+            {sug.map((c, i) => (
+              <button key={c.name} type="button" onMouseDown={() => pick(c)} onMouseEnter={() => setIdx(i)}
+                className={`w-full flex justify-between gap-2 px-3 py-2 text-sm text-left transition-colors ${i === idx ? "bg-violet-50" : ""}`}>
+                <span className="text-slate-800 truncate">{mark(c.name)}</span><span className="text-slate-400 text-xs shrink-0">{c.phone}</span>
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// Teléfono: agrupa los números de 4 en 4 (5555 1234); con +código lo deja como lo escribes
+function formatPhone(v) {
+  const raw = String(v || "");
+  if (raw.trim().startsWith("+")) return raw.replace(/[^\d+ ]/g, "");
+  const d = raw.replace(/\D/g, "").slice(0, 15);
+  return d.replace(/(\d{4})(?=\d)/g, "$1 ");
+}
+
+
+// Atajos de fecha: hoy y los próximos sábados (los eventos casi siempre caen en sábado)
+function quickDates(todayIso) {
+  const [y, m, d] = todayIso.split("-").map(Number);
+  const base = new Date(y, m - 1, d);
+  const iso = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  const sat = new Date(base); sat.setDate(base.getDate() + ((6 - base.getDay() + 7) % 7));
+  const next = new Date(sat); next.setDate(sat.getDate() + 7);
+  const after = new Date(sat); after.setDate(sat.getDate() + 14);
+  return [
+    { key: "hoy", label: "Hoy", iso: todayIso },
+    { key: "sabado", label: base.getDay() === 6 ? "Este sábado (hoy)" : "Este sábado", iso: iso(sat) },
+    { key: "proximo", label: "Próximo sábado", iso: iso(next) },
+    { key: "en2", label: `Sáb ${after.getDate()} ${MESES[after.getMonth()].slice(0, 3)}`, iso: iso(after) },
+  ];
+}
+
+// Abre un menú hacia arriba si abajo no cabe (pero arriba sí)
+function useOpenUp(ref, open, height) {
+  const [up, setUp] = useState(false);
+  useEffect(() => {
+    if (!open || !ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom;
+    setUp(below < height + 16 && r.top > below);
+  }, [open, ref, height]);
+  return up;
+}
+
+// ── Hora: presets de eventos + reloj sencillo (12 h) ──
+const TIME_PRESETS = ["10:00", "12:00", "14:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
+function parseHM(v) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(v || "");
+  return m ? { h: +m[1], m: +m[2] } : null;
+}
+function to12(v) {
+  const t = parseHM(v); if (!t) return "";
+  const ap = t.h >= 12 ? "p. m." : "a. m.";
+  const h = t.h % 12 === 0 ? 12 : t.h % 12;
+  return `${h}:${String(t.m).padStart(2, "0")} ${ap}`;
+}
+function dayPart(v) {
+  const t = parseHM(v); if (!t) return { label: "", icon: Clock, color: "#94a3b8" };
+  if (t.h < 12) return { label: "Mañana", icon: Sunrise, color: "#f59e0b" };
+  if (t.h < 17) return { label: "Tarde", icon: Sun, color: "#f97316" };
+  if (t.h < 19) return { label: "Atardecer", icon: Sunset, color: "#ec4899" };
+  return { label: "Noche", icon: Moon, color: "#6366f1" };
+}
+function RTimeField({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const t = parseHM(value) || { h: 17, m: 0 };
+  const pm = t.h >= 12;
+  const h12 = t.h % 12 === 0 ? 12 : t.h % 12;
+  const part = dayPart(value);
+  const PartIcon = part.icon;
+  const up = useOpenUp(ref, open, 440);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  const setHM = (h24, m) => onChange(`${String(h24).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+  const pickHour = (h) => setHM(pm ? (h % 12) + 12 : h % 12, t.m);
+  const pickMin = (m) => setHM(t.h, m);
+  const pickAmPm = (isPm) => { if (isPm !== pm) setHM(isPm ? t.h + 12 : t.h - 12, t.m); };
+  const bump = (mins) => { const total = (t.h * 60 + t.m + mins + 1440) % 1440; setHM(Math.floor(total / 60), total % 60); };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button type="button" onClick={() => setOpen((o) => !o)} data-testid="input-event-time-pretty"
+        className={`cp-rf-input w-full h-11 rounded-xl border bg-white pl-9 pr-3 flex items-center justify-between text-left text-sm outline-none transition ${open ? "border-violet-400 ring-4 ring-violet-500/10" : "border-slate-200"} ${value ? "text-slate-800" : "text-slate-400"}`}>
+        <span className="tabular-nums">{value ? to12(value) : "Elegir hora"}</span>
+        <AnimatePresence mode="wait" initial={false}>
+          {value && (
+            <motion.span key={part.label} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
+              className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full"
+              style={{ color: part.color, background: `${part.color}1a` }}>{part.label}</motion.span>
+          )}
+        </AnimatePresence>
+      </button>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span key={part.label || "none"} className="absolute left-3 top-[22px] -translate-y-1/2 pointer-events-none flex"
+          initial={{ rotate: -60, scale: 0.5, opacity: 0 }} animate={{ rotate: 0, scale: 1, opacity: 1 }} exit={{ rotate: 60, scale: 0.5, opacity: 0 }}
+          transition={{ type: "spring", stiffness: 420, damping: 20 }} style={{ color: value ? part.color : "#94a3b8" }}>
+          <PartIcon size={15} />
+        </motion.span>
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div data-rf-popup initial={{ opacity: 0, y: up ? 6 : -6, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: up ? 6 : -6, scale: 0.97 }}
+            transition={{ duration: 0.16 }}
+            className={`absolute right-0 z-30 w-[300px] max-w-[85vw] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl ${up ? "bottom-full mb-2" : "mt-2"}`} data-testid="time-popup">
+            {/* Hora grande con +/- */}
+            <div className="flex items-center justify-between mb-3">
+              <button type="button" onClick={() => bump(-15)} aria-label="15 minutos menos"
+                className="w-8 h-8 rounded-full grid place-items-center text-slate-500 hover:bg-slate-100 text-lg font-black">−</button>
+              <div className="text-center">
+                <p className="text-3xl font-black text-slate-900 tabular-nums leading-none">{h12}:{String(t.m).padStart(2, "0")}</p>
+                <p className="text-[11px] font-bold mt-1" style={{ color: dayPart(`${t.h}:${t.m}`).color }}>{pm ? "p. m." : "a. m."} · {dayPart(`${t.h}:${t.m}`).label}</p>
+              </div>
+              <button type="button" onClick={() => bump(15)} aria-label="15 minutos más"
+                className="w-8 h-8 rounded-full grid place-items-center text-slate-500 hover:bg-slate-100 text-lg font-black">+</button>
+            </div>
+
+            {/* Horas típicas de evento */}
+            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Horas comunes</p>
+            <div className="grid grid-cols-4 gap-1.5 mb-3">
+              {TIME_PRESETS.map((v) => {
+                const on = value === v;
+                return (
+                  <button key={v} type="button" onClick={() => { onChange(v); setOpen(false); }} data-testid={`time-preset-${v}`}
+                    className={`h-8 rounded-lg text-[11px] font-bold border transition-colors ${on ? "border-transparent text-white" : "border-slate-200 text-slate-600 hover:border-slate-400"}`}
+                    style={on ? { background: "linear-gradient(135deg, var(--t-from,#8b5cf6), var(--t-to,#ec4899))" } : undefined}>
+                    {to12(v).replace(":00", "").replace(" p. m.", " pm").replace(" a. m.", " am")}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Reloj: hora, minutos, a. m./p. m. */}
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Hora</p>
+              <div className="inline-flex p-0.5 rounded-full bg-slate-100">
+                {[["a. m.", false], ["p. m.", true]].map(([l, isPm]) => (
+                  <button key={l} type="button" onClick={() => pickAmPm(isPm)}
+                    className={`relative px-2.5 py-0.5 rounded-full text-[10px] font-black transition-colors ${pm === isPm ? "text-white" : "text-slate-500"}`}>
+                    {pm === isPm && <motion.span layoutId="rf-ampm" className="absolute inset-0 rounded-full bg-slate-900" transition={{ type: "spring", stiffness: 500, damping: 34 }} />}
+                    <span className="relative z-10">{l}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-6 gap-1 mb-3">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((h) => (
+                <button key={h} type="button" onClick={() => pickHour(h)} data-testid={`time-hour-${h}`}
+                  className={`h-8 rounded-lg text-xs font-bold transition-colors ${value && h12 === h ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}>{h}</button>
+              ))}
+            </div>
+            <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Minutos</p>
+            <div className="grid grid-cols-4 gap-1 mb-3">
+              {[0, 15, 30, 45].map((m) => (
+                <button key={m} type="button" onClick={() => pickMin(m)} data-testid={`time-min-${m}`}
+                  className={`h-8 rounded-lg text-xs font-bold transition-colors ${value && t.m === m ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}>:{String(m).padStart(2, "0")}</button>
+              ))}
+            </div>
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+              <button type="button" onClick={() => { onChange(""); setOpen(false); }} className="text-[11px] font-bold text-slate-400 hover:text-rose-500">Sin hora</button>
+              <button type="button" onClick={() => { if (!value) setHM(t.h, t.m); setOpen(false); }} data-testid="time-done"
+                className="px-4 h-8 rounded-lg text-xs font-black text-white"
+                style={{ background: "linear-gradient(135deg, var(--t-from,#8b5cf6), var(--t-to,#ec4899))" }}>Listo</button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -884,15 +1256,24 @@ function RDateField({ value, busy, onChange }) {
   const iso = (d) => `${cur.y}-${String(cur.m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   const move = (n) => setCur((c) => { const dt = new Date(c.y, c.m + n, 1); return { y: dt.getFullYear(), m: dt.getMonth() }; });
   const today = new Date(); const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const up = useOpenUp(ref, open, 410);
+  const nBusy = value ? (busy[value] || []).length : 0;
   return (
     <div className="relative" ref={ref}>
       <button type="button" onClick={() => setOpen((o) => !o)} data-testid="input-event-date-pretty"
-        className={`cp-rf-input w-full h-11 rounded-xl border bg-white pl-9 pr-3 text-left text-sm outline-none transition ${open ? "border-violet-400 ring-4 ring-violet-500/10" : "border-slate-200"} ${value ? "text-slate-800" : "text-slate-400"}`}>
-        {value ? fechaLarga(value) : "Elegir fecha"}
+        className={`cp-rf-input w-full h-11 rounded-xl border bg-white pl-9 pr-2 flex items-center justify-between gap-2 text-left text-sm outline-none transition ${open ? "border-violet-400 ring-4 ring-violet-500/10" : "border-slate-200"} ${value ? "text-slate-800" : "text-slate-400"}`}>
+        <span className="truncate" title={value ? fechaLarga(value) : undefined}>{value ? fechaMedia(value) : "Elegir fecha"}</span>
+        <AnimatePresence mode="wait" initial={false}>
+          {value && (
+            <motion.span key={value} initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.8 }}
+              className={`shrink-0 text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${nBusy ? "bg-amber-100 text-amber-700" : value < todayIso ? "bg-slate-100 text-slate-500" : "bg-violet-100 text-violet-700"}`}
+              data-testid="date-countdown">{relDays(value)}</motion.span>
+          )}
+        </AnimatePresence>
       </button>
-      <CalIcon size={15} className="absolute left-3 top-[22px] -translate-y-1/2 text-slate-400 pointer-events-none" />
+      <CalIcon size={15} className={`absolute left-3 top-[22px] -translate-y-1/2 pointer-events-none transition-colors ${open ? "text-violet-500" : "text-slate-400"}`} />
       {open && (
-        <div data-rf-popup className="absolute z-30 mt-2 w-[310px] max-w-[85vw] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+        <div data-rf-popup className={`absolute z-30 w-[310px] max-w-[85vw] rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl ${up ? "bottom-full mb-2" : "mt-2"}`}>
           <div className="flex items-center justify-between mb-3">
             <button type="button" onClick={() => move(-1)} className="w-8 h-8 rounded-full grid place-items-center hover:bg-slate-100 text-slate-500" aria-label="Mes anterior"><ChevronLeft size={16} /></button>
             <p className="font-black text-slate-900">{MESES[cur.m].charAt(0).toUpperCase() + MESES[cur.m].slice(1)} {cur.y}</p>
@@ -913,7 +1294,20 @@ function RDateField({ value, busy, onChange }) {
               );
             })}
           </div>
-          <p className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-3"><i className="w-1.5 h-1.5 rounded-full bg-rose-500" /> Días con eventos ya reservados</p>
+          <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-slate-100">
+            {quickDates(todayIso).map((qd) => {
+              const n = (busy[qd.iso] || []).length; const on = value === qd.iso;
+              return (
+                <button key={qd.label} type="button" onClick={() => { onChange(qd.iso); setOpen(false); }} data-testid={`date-quick-${qd.key}`}
+                  className={`relative px-2.5 h-7 rounded-lg text-[11px] font-bold border transition-colors ${on ? "border-transparent text-white" : "border-slate-200 text-slate-600 hover:border-slate-400"}`}
+                  style={on ? { background: "linear-gradient(135deg, var(--t-from,#8b5cf6), var(--t-to,#ec4899))" } : undefined}>
+                  {qd.label}
+                  {n > 0 && <i className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white" />}
+                </button>
+              );
+            })}
+          </div>
+          <p className="flex items-center gap-1.5 text-[11px] text-slate-500 mt-2"><i className="w-1.5 h-1.5 rounded-full bg-rose-500" /> Días con eventos ya reservados</p>
         </div>
       )}
     </div>
