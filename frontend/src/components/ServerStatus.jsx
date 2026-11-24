@@ -48,7 +48,8 @@ export default function ServerStatus() {
     <AnimatePresence>
       {state !== "ok" && (
         <motion.div key="srv" role="status" aria-live="polite"
-          initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -16 }}
+          initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12, transition: { duration: 0.15 } }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
           className="fixed top-3 left-1/2 -translate-x-1/2 z-[2147482000] flex items-center gap-2 px-4 py-2 rounded-full shadow-xl text-sm font-bold text-white"
           style={{ background: state === "back" ? "#10b981" : "#334155" }} data-testid="server-status">
           {state === "back"

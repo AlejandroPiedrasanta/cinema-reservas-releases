@@ -116,11 +116,11 @@ export default function UpdateProgressToast() {
     <AnimatePresence>
       <motion.div
         key="update-progress-toast"
-        initial={{ opacity: 0, y: 40, scale: 0.96 }}
+        initial={{ opacity: 0, y: 12, scale: 0.96 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 20, scale: 0.96 }}
-        transition={{ type: "spring", stiffness: 300, damping: 26 }}
-        className="fixed bottom-6 right-6 z-[9999] w-[340px] rounded-xl border bg-background/95 backdrop-blur shadow-lg"
+        exit={{ opacity: 0, y: 12, scale: 0.96, transition: { duration: 0.15 } }}
+        transition={{ duration: 0.22, ease: "easeOut" }}
+        className="fixed bottom-6 right-6 z-[9999] w-[340px] rounded-xl border bg-background/95 shadow-lg"
         data-testid="update-progress-toast"
       >
         <div className="p-4">

@@ -1,4 +1,5 @@
-@import url('https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@400,500,600,700,800,900&f[]=satoshi@400,500,600,700&display=swap');
+/* Fuentes (Satoshi / Cabinet Grotesk): se cargan desde index.html sin bloquear la primera
+   pintura. Antes un @import aquí dejaba la ventana en blanco hasta que llegaban (o fallaban). */
 
 @tailwind base;
 @tailwind components;
@@ -90,26 +91,29 @@ h1, h2, h3, h4, h5, h6 {
 /* Glass card utility */
 /* .glass defined via --glass-blur CSS variable at bottom of file */
 
+/* Rendimiento: el desenfoque de fondo (backdrop-filter) se recalcula en cada frame y en
+   Retina cuesta 4x. Solo lo llevan elementos fijos y pequeños (menú, modales), con
+   radio ≤ 10px y sin saturate; las tarjetas que se desplazan (.glass) no lo usan. */
 .glass-strong {
-  background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(24px) saturate(200%);
-  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  background: rgba(255, 255, 255, 0.70);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.75);
   box-shadow: 0 16px 48px 0 rgba(31, 38, 135, 0.10), 0 1px 0 rgba(255,255,255,0.9) inset;
 }
 
 .glass-modal {
-  background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(32px) saturate(200%);
-  -webkit-backdrop-filter: blur(32px) saturate(200%);
+  background: rgba(255, 255, 255, 0.80);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.8);
   box-shadow: 0 24px 64px 0 rgba(31, 38, 135, 0.15), 0 1px 0 rgba(255,255,255,0.95) inset;
 }
 
 .glass-sidebar {
-  background: rgba(255, 255, 255, 0.60);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  background: rgba(255, 255, 255, 0.66);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border-right: 1px solid rgba(255, 255, 255, 0.70);
   box-shadow: 4px 0 24px 0 rgba(31, 38, 135, 0.06);
 }
@@ -162,6 +166,9 @@ h1, h2, h3, h4, h5, h6 {
   z-index: 0;
   overflow: hidden;
   pointer-events: none;
+  /* capa propia y aislada: se pinta una vez y no se repinta al desplazar el contenido */
+  contain: strict;
+  transform: translateZ(0);
 }
 
 /* Fondo: manchas de color suaves. Rendimiento: degradado radial (sin filter: blur) y
@@ -208,20 +215,20 @@ h1, h2, h3, h4, h5, h6 {
   100% { transform: translateX(200%) skewX(-12deg); }
 }
 
-/* Fade-up entrance */
+/* Fade-up entrance (solo opacidad + desplazamiento: sin filter, que es caro de pintar) */
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(20px) scale(0.98); filter: blur(4px); }
-  to   { opacity: 1; transform: translateY(0)    scale(1);    filter: blur(0); }
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Pulse-glow for active indicators */
+/* Pulse-glow for active indicators (estático: animar box-shadow repinta en cada frame) */
 @keyframes pulse-glow {
   0%, 100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.15); }
   50%       { box-shadow: 0 0 0 8px rgba(99, 102, 241, 0); }
 }
 
 .animate-fade-up {
-  animation: fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: fade-up 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .shimmer-card {
@@ -229,16 +236,10 @@ h1, h2, h3, h4, h5, h6 {
   overflow: hidden;
 }
 
-.shimmer-card::after {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: linear-gradient(90deg, transparent 30%, rgba(255,255,255,0.22) 50%, transparent 70%);
-  animation: shimmer-sweep 2.2s ease-in-out infinite;
-  pointer-events: none;
-}
+/* El brillo que recorría la tarjeta sin parar se quita (era solo movimiento decorativo). */
+.shimmer-card::after { content: none; }
 
-.pulse-glow { animation: pulse-glow 2s ease-in-out infinite; }
+.pulse-glow { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.15); }
 
 /* ═══════════════════════════════════════════
    DESIGN PRESETS
@@ -253,28 +254,28 @@ body { background-color: var(--body-bg) !important; }
 /* ── CRYSTAL: Opaque glass, subdued blobs ── */
 [data-preset="crystal"] .glass {
   background: rgba(255, 255, 255, 0.84);
-  backdrop-filter: blur(10px) saturate(140%);
-  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   border: 1px solid rgba(210, 220, 232, 0.95);
   box-shadow: 0 6px 24px rgba(0,0,0,0.09), 0 2px 6px rgba(0,0,0,0.04);
 }
 [data-preset="crystal"] .glass-strong {
   background: rgba(255, 255, 255, 0.93);
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid rgba(210, 220, 232, 1);
   box-shadow: 0 8px 32px rgba(0,0,0,0.10);
 }
 [data-preset="crystal"] .glass-modal {
   background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border: 1px solid rgba(210, 220, 232, 1);
 }
 [data-preset="crystal"] .glass-sidebar {
   background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   border-right: 1px solid rgba(210, 220, 232, 0.9);
   box-shadow: 4px 0 16px rgba(0,0,0,0.05);
 }
@@ -336,6 +337,18 @@ body { background-color: var(--body-bg) !important; }
 [data-animations="false"] .animate-fade-up,
 [data-animations="false"] .shimmer-card::after { animation: none !important; }
 [data-animations="false"] * { transition-duration: 60ms !important; }
+/* Animaciones apagadas o «reducir movimiento» del sistema: TODO movimiento CSS decorativo se
+   detiene (las animaciones terminan al instante en su estado final, sin bucles). Las de
+   framer-motion las detiene MotionConfig (App.jsx). */
+[data-animations="false"] *, [data-animations="false"] *::before, [data-animations="false"] *::after {
+  animation-duration: 0.001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important; scroll-behavior: auto !important;
+  }
+}
 
 
 /* ═══════════════════════════════════════════
@@ -477,17 +490,21 @@ body  { font-family: var(--font-body) !important; }
   box-shadow: none !important;
 }
 [data-card="neon"] .glass {
-  background: rgba(5, 6, 20, 0.82) !important;
-  backdrop-filter: blur(20px) !important;
+  background: rgba(5, 6, 20, 0.84) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   border-color: var(--t-from) !important;
   box-shadow: 0 0 28px rgba(99,102,241,0.22), inset 0 0 20px rgba(99,102,241,0.04) !important;
 }
 [data-card="neon"] .text-slate-900 { color: #f1f5f9 !important; }
 [data-card="neon"] .text-slate-700 { color: #cbd5e1 !important; }
 [data-card="neon"] .text-slate-500 { color: #64748b !important; }
+/* «Esmerilado» es justamente el efecto de desenfoque (opción elegida a mano): se conserva,
+   pero con un radio mucho menor (antes 48px + saturate 240%). */
 [data-card="frosted"] .glass {
-  background: rgba(255, 255, 255, 0.22) !important;
-  backdrop-filter: blur(48px) saturate(240%) !important;
+  background: rgba(255, 255, 255, 0.30) !important;
+  backdrop-filter: blur(10px) saturate(150%) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(150%) !important;
   border-color: rgba(255,255,255,0.65) !important;
   box-shadow: 0 8px 32px rgba(0,0,0,0.08) !important;
 }
@@ -572,14 +589,19 @@ body  { font-family: var(--font-body) !important; }
 /* ═══════════════════════════════════════════
    GLASS BLUR INTENSITY
 ═══════════════════════════════════════════ */
-:root { --glass-blur: 20px; }
+/* Rendimiento: las tarjetas .glass ya NO desenfocan lo que tienen detrás (backdrop-filter se
+   recalculaba en cada frame al desplazar, 4x en Retina). El fondo detrás es liso (manchas de
+   color suaves), así que el mismo tinte se consigue con un blanco translúcido algo más denso:
+   --glass-fill = opacidad elegida + «escarcha» según «Desenfoque del vidrio» (lo calcula
+   SettingsContext; con desenfoque 0 es exactamente la opacidad elegida). */
+:root { --glass-blur: 20px; --glass-fill: 0.615; }
 .glass {
-  background: rgba(255, 255, 255, 0.45);
-  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  background: rgba(255, 255, 255, var(--glass-fill));
   border: 1px solid rgba(255, 255, 255, 0.65);
   box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07), 0 1px 0 rgba(255,255,255,0.8) inset;
 }
+/* Minimal nunca tuvo desenfoque: usa la opacidad tal cual */
+[data-preset="minimal"] .glass { --glass-fill: var(--glass-bg-opacity); }
 
 
 /* ═══════════════════════════════════════════
@@ -699,11 +721,14 @@ body::after {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
   opacity: var(--noise-opacity);
 }
+/* Sin textura elegida (lo normal) la capa de ruido no se crea: era una capa a pantalla
+   completa encima de todo, invisible pero igualmente pintada. */
+html:not([data-noise="on"]) body:not(.app-blur-unfocus)::after { content: none; }
 
 /* ── Glass Opacity ── */
 :root { --glass-bg-opacity: 0.45; --glass-border-opacity: 0.65; }
 .glass {
-  background: rgba(255, 255, 255, var(--glass-bg-opacity)) !important;
+  background: rgba(255, 255, 255, var(--glass-fill)) !important;
   border-color: rgba(255, 255, 255, var(--glass-border-opacity)) !important;
 }
 
@@ -762,7 +787,7 @@ body::after {
 /* ── Table Style ── */
 [data-table-style="striped"]  tr:nth-child(even)    { background: rgba(248,250,252,0.6); }
 [data-table-style="bordered"] td,[data-table-style="bordered"] th { border: 1px solid rgba(226,232,240,0.8) !important; }
-[data-table-style="glass"]    table { backdrop-filter: blur(12px); background: rgba(255,255,255,0.35); border-radius: 12px; overflow: hidden; }
+[data-table-style="glass"]    table { background: rgba(255,255,255,0.5); border-radius: 12px; overflow: hidden; }
 
 /* ── Row Hover ── */
 [data-row-hover="scale"]     tr:hover { transform: scaleY(1.02); }
@@ -826,13 +851,14 @@ body::after {
 @keyframes gradient-shift { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
 @keyframes shine-sweep { from { transform: translateX(-160%) skewX(-18deg); } to { transform: translateX(300%) skewX(-18deg); } }
 
-.animate-float { animation: float-soft 3.2s ease-in-out infinite; }
+/* Rendimiento: los bucles decorativos infinitos se quitan (la pieza queda en reposo). */
+.animate-float { animation: none; }
 .icon-wiggle:hover { animation: wiggle-soft 0.45s ease-in-out; }
 
-/* Animated gradient headings */
+/* Títulos con degradado: quietos (animar background-position repintaba el texto en cada
+   frame en todas las pantallas). Se ve el degradado completo índigo → violeta → rosa. */
 .gradient-text {
-  background-size: 200% 200%;
-  animation: gradient-shift 7s ease-in-out infinite;
+  background-size: 100% 100%;
 }
 
 /* Shine sweep on primary buttons */
@@ -900,7 +926,6 @@ body.app-blur-unfocus::after {
   transform-style: preserve-3d;
   perspective: 1000px;
   transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-  will-change: transform;
 }
 .tilt-3d:hover {
   transform: perspective(1000px) rotateX(4deg) rotateY(-4deg) translateZ(10px) scale(1.02);
@@ -912,7 +937,7 @@ body.app-blur-unfocus::after {
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-6px); }
 }
-.animate-levitate { animation: levitate 4s ease-in-out infinite; }
+.animate-levitate { animation: none; }
 
 /* Shine sweep — brillo que recorre elementos */
 @keyframes shine-full {
@@ -936,8 +961,8 @@ body.app-blur-unfocus::after {
   70%  { box-shadow: 0 0 0 14px rgba(139,92,246,0); }
   100% { box-shadow: 0 0 0 0 rgba(139,92,246,0); }
 }
-.pulse-ring { animation: pulse-ring 2s cubic-bezier(0.66,0,0,1) infinite; }
-.pulse-ring-emerald { animation: pulse-ring 2s cubic-bezier(0.66,0,0,1) infinite; box-shadow-color: rgba(16,185,129,0.55); }
+/* (estático: animar box-shadow repinta en cada frame) */
+.pulse-ring, .pulse-ring-emerald { animation: none; }
 
 /* Icon bounce on hover */
 .icon-bounce { transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
@@ -949,16 +974,15 @@ body.app-blur-unfocus::after {
   50%      { background-position: 100% 50%; }
 }
 .gradient-shift {
-  background-size: 200% 200%;
-  animation: gradient-shift 4s ease infinite;
+  background-size: 100% 100%;
 }
 
-/* Card entrance con perspectiva */
+/* Card entrance (corta: solo opacidad + desplazamiento) */
 @keyframes card-in-3d {
-  0%   { opacity: 0; transform: perspective(600px) rotateX(-30deg) translateY(30px); }
-  100% { opacity: 1; transform: perspective(600px) rotateX(0deg) translateY(0); }
+  0%   { opacity: 0; transform: translateY(10px); }
+  100% { opacity: 1; transform: translateY(0); }
 }
-.card-in-3d { animation: card-in-3d 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.card-in-3d { animation: card-in-3d 0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
 
 /* Desactivar animaciones si el usuario lo pide */
 [data-animations="false"] .tilt-3d,
@@ -1004,15 +1028,8 @@ body.app-blur-unfocus::after {
 .menu-item-active-glow {
   position: relative;
 }
-.menu-item-active-glow::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
-  animation: menu-shine 3s ease infinite;
-  pointer-events: none;
-}
+/* (el brillo que recorría sin parar el ítem activo se quita: era solo movimiento) */
+.menu-item-active-glow::after { content: none; }
 @keyframes menu-shine {
   0%, 100% { transform: translateX(-100%); opacity: 0; }
   50% { transform: translateX(100%); opacity: 1; }
@@ -1058,7 +1075,6 @@ body.app-blur-unfocus::after {
   background: rgba(255,255,255,0.22);
   border-color: rgba(255,255,255,0.5);
   box-shadow: 0 8px 22px -6px rgba(15,23,42,0.35), inset 0 1px 0 rgba(255,255,255,0.6);
-  backdrop-filter: blur(6px);
   color: #fff;
 }
 [data-dark="true"] .nav-tile { border-color: rgba(255,255,255,0.18); }
@@ -1099,17 +1115,19 @@ body.app-blur-unfocus::after {
   33%      { transform: translate(6%, -4%) scale(1.08); }
   66%      { transform: translate(-5%, 5%) scale(1.05); }
 }
+/* Rendimiento: manchas quietas y sin filter: blur(80px); la suavidad se consigue con una
+   máscara radial (se pinta una sola vez) y un poco más de tamaño. */
 .ultra-aurora-blob {
   position: absolute;
-  filter: blur(80px);
   opacity: 0.55;
   border-radius: 50%;
-  animation: ultra-aurora 18s ease-in-out infinite;
   pointer-events: none;
-  will-change: transform;
+  transform: scale(1.35);
+  -webkit-mask-image: radial-gradient(closest-side, #000 15%, transparent 100%);
+          mask-image: radial-gradient(closest-side, #000 15%, transparent 100%);
 }
 
-/* Animated grid overlay */
+/* Grid overlay (quieto) */
 @keyframes ultra-grid-drift {
   0%   { background-position: 0 0; }
   100% { background-position: 60px 60px; }
@@ -1120,7 +1138,6 @@ body.app-blur-unfocus::after {
     linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px);
   background-size: 60px 60px;
-  animation: ultra-grid-drift 40s linear infinite;
   mask-image: radial-gradient(ellipse at center, black 40%, transparent 90%);
   -webkit-mask-image: radial-gradient(ellipse at center, black 40%, transparent 90%);
   pointer-events: none;
@@ -1131,16 +1148,8 @@ body.app-blur-unfocus::after {
   0%   { transform: translateX(-150%) skewX(-20deg); }
   100% { transform: translateX(250%)  skewX(-20deg); }
 }
-.ultra-sweep {
-  position: absolute;
-  top: 0; left: 0;
-  width: 40%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.35) 50%, transparent 100%);
-  animation: ultra-sweep 3.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  pointer-events: none;
-  z-index: 2;
-}
+/* (barrido de luz infinito: se quita, era solo movimiento) */
+.ultra-sweep { display: none; }
 
 /* Continuous conic border glow */
 @keyframes ultra-spin {
@@ -1162,18 +1171,17 @@ body.app-blur-unfocus::after {
           mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor;
           mask-composite: exclude;
-  animation: ultra-spin 6s linear infinite;
   opacity: 0.8;
   pointer-events: none;
   z-index: 0;
 }
 
-/* Floating icon pulse */
+/* Floating icon pulse (quieto) */
 @keyframes ultra-pulse-icon {
   0%, 100% { transform: translateY(0) scale(1); }
   50%      { transform: translateY(-3px) scale(1.06); }
 }
-.ultra-icon-float { animation: ultra-pulse-icon 3s ease-in-out infinite; }
+.ultra-icon-float { animation: none; }
 
 /* Input container with focused ring */
 .ultra-field {
@@ -1195,8 +1203,6 @@ body.app-blur-unfocus::after {
   letter-spacing: -0.01em;
   outline: none;
   transition: all 0.3s cubic-bezier(0.22,1,0.36,1);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 .ultra-field input::placeholder,
 .ultra-field textarea::placeholder { color: rgba(255,255,255,0.4); font-weight: 500; }
@@ -1272,7 +1278,6 @@ body.app-blur-unfocus::after {
   align-items: center;
   gap: 6px;
   transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-  backdrop-filter: blur(10px);
 }
 .ultra-choice:hover {
   background: rgba(255,255,255,0.09);
@@ -1288,14 +1293,6 @@ body.app-blur-unfocus::after {
     0 12px 32px -8px rgba(167,139,250,0.55),
     inset 0 1px 0 rgba(255,255,255,0.2);
   transform: translateY(-2px);
-}
-.ultra-choice.is-active::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(120deg, transparent 30%, rgba(255,255,255,0.25) 50%, transparent 70%);
-  animation: ultra-sweep 2.8s ease-in-out infinite;
-  pointer-events: none;
 }
 .ultra-choice svg { transition: transform 0.35s cubic-bezier(0.34,1.56,0.64,1); }
 .ultra-choice:hover svg { transform: scale(1.15) rotate(-4deg); }
@@ -1336,17 +1333,7 @@ body.app-blur-unfocus::after {
 }
 .ultra-cta:active:not(:disabled) { transform: translateY(0) scale(0.98); }
 .ultra-cta:disabled { opacity: 0.55; cursor: not-allowed; }
-.ultra-cta::before {
-  content: "";
-  position: absolute;
-  top: 0; left: -80%;
-  width: 60%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
-  transform: skewX(-24deg);
-  animation: ultra-cta-sweep 3s ease-in-out infinite;
-  z-index: -1;
-}
+/* (el barrido infinito del botón animaba «left»: se quita) */
 @keyframes ultra-cta-sweep {
   0%, 60% { left: -80%; }
   100%    { left: 130%; }
@@ -1366,7 +1353,6 @@ body.app-blur-unfocus::after {
   gap: 6px;
   transition: all 0.28s cubic-bezier(0.22,1,0.36,1);
   cursor: pointer;
-  backdrop-filter: blur(10px);
 }
 .ultra-secondary:hover {
   background: rgba(255,255,255,0.12);
@@ -1385,7 +1371,7 @@ body.app-blur-unfocus::after {
   -webkit-background-clip: text;
           background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: ultra-title-shine 6s linear infinite;
+  background-position: 0% 50%;
 }
 @keyframes ultra-title-shine {
   0%   { background-position: 0% 50%; }
@@ -1431,9 +1417,8 @@ body.app-blur-unfocus::after {
   font-weight: 900;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  animation: edit-badge-pulse 2.4s ease-in-out infinite;
+  box-shadow: 0 0 0 0 rgba(236,72,153,0.55), 0 0 22px -4px rgba(236,72,153,0.45);
 }
-.edit-badge svg { animation: edit-pencil 3.5s ease-in-out infinite; }
 @keyframes edit-pencil {
   0%,100% { transform: rotate(0deg); }
   20%     { transform: rotate(-12deg) translateY(-1px); }
@@ -1456,8 +1441,6 @@ body.app-blur-unfocus::after {
   letter-spacing: -0.02em;
   color: #ffffff;
   background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 60%, #f59e0b 100%);
-  background-size: 200% 200%;
-  animation: avatar-shine 6s linear infinite;
   box-shadow: 0 10px 24px -8px rgba(139,92,246,0.7), inset 0 1px 0 rgba(255,255,255,0.28);
 }
 .edit-avatar::after {
@@ -1468,7 +1451,6 @@ body.app-blur-unfocus::after {
   z-index: -1;
   filter: blur(6px);
   opacity: 0.55;
-  animation: ultra-spin 5s linear infinite;
 }
 @keyframes avatar-shine {
   0%   { background-position: 0% 50%; }
@@ -1535,7 +1517,7 @@ body.app-blur-unfocus::after {
   50%     { transform: scale(1.35); opacity: 0.65; }
 }
 
-/* Save CTA with dirty state */
+/* Save CTA with dirty state (aviso útil: solo transform, en el compositor) */
 .ultra-cta.has-changes {
   animation: cta-attention 1.6s ease-in-out infinite;
 }
@@ -1696,13 +1678,14 @@ body.app-blur-unfocus::after {
   position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0;
 }
 .sidebar-aurora .orb {
-  /* degradado radial en vez de filter: blur (mismo aspecto, mucho menos trabajo para la tarjeta grafica) */
-  position: absolute; border-radius: 9999px; opacity: 0.38; will-change: transform;
+  /* degradado radial en vez de filter: blur (mismo aspecto, mucho menos trabajo para la tarjeta grafica).
+     Quietas: moverlas sin parar obligaba a recomponer el menú (con su desenfoque) en cada frame. */
+  position: absolute; border-radius: 9999px; opacity: 0.38;
   background: radial-gradient(circle at center, var(--orb-c) 0%, transparent 68%);
 }
-.sidebar-aurora .orb-1 { --orb-c: var(--t-from, #8b5cf6); width: 280px; height: 280px; top: -95px; left: -95px; animation: sbFloat1 15s ease-in-out infinite; }
-.sidebar-aurora .orb-2 { --orb-c: var(--t-to, #ec4899); width: 250px; height: 250px; bottom: 50px; right: -100px; animation: sbFloat2 19s ease-in-out infinite; }
-.sidebar-aurora .orb-3 { --orb-c: #06b6d4; width: 220px; height: 220px; top: 40%; left: -75px; animation: sbFloat1 22s ease-in-out infinite reverse; }
+.sidebar-aurora .orb-1 { --orb-c: var(--t-from, #8b5cf6); width: 280px; height: 280px; top: -95px; left: -95px; }
+.sidebar-aurora .orb-2 { --orb-c: var(--t-to, #ec4899); width: 250px; height: 250px; bottom: 50px; right: -100px; }
+.sidebar-aurora .orb-3 { --orb-c: #06b6d4; width: 220px; height: 220px; top: 40%; left: -75px; }
 @keyframes sbFloat1 {
   0%   { transform: translate(0,0) scale(1); }
   50%  { transform: translate(28px, 40px) scale(1.18); }
@@ -1717,20 +1700,13 @@ body.app-blur-unfocus::after {
 .sidebar-edge {
   position: absolute; top: 0; right: 0; width: 2px; height: 100%; z-index: 3; pointer-events: none;
   background: linear-gradient(180deg, transparent 0%, var(--t-from, #8b5cf6) 25%, var(--t-to, #ec4899) 50%, var(--t-from, #8b5cf6) 75%, transparent 100%);
-  background-size: 100% 250%;
-  animation: sbEdge 5s linear infinite;
   opacity: 0.8;
   box-shadow: 0 0 14px 1px color-mix(in srgb, var(--t-from, #8b5cf6) 55%, transparent);
 }
 @keyframes sbEdge { 0% { background-position: 0% 0%; } 100% { background-position: 0% 250%; } }
 /* Logo shimmer sweep */
 .sidebar-brand { position: relative; overflow: hidden; }
-.sidebar-brand::after {
-  content: ""; position: absolute; top: 0; left: -60%; width: 45%; height: 100%; z-index: 2; pointer-events: none;
-  background: linear-gradient(115deg, transparent 0%, rgba(255,255,255,0.55) 50%, transparent 100%);
-  transform: skewX(-18deg);
-  animation: sbSheen 6.5s ease-in-out infinite;
-}
+/* (el brillo infinito sobre el logo animaba «left»: se quita) */
 @keyframes sbSheen {
   0%, 62% { left: -60%; }
   85%     { left: 140%; }
@@ -1753,7 +1729,6 @@ body.app-blur-unfocus::after {
   text-align: left;
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.22,1,0.36,1);
-  backdrop-filter: blur(12px);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1783,7 +1758,6 @@ body.app-blur-unfocus::after {
   border-radius: 18px;
   padding: 14px;
   box-shadow: 0 24px 60px -8px rgba(0,0,0,0.65), 0 0 0 1px rgba(255,255,255,0.05);
-  backdrop-filter: blur(20px);
   min-width: 260px;
 }
 .ultra-popover-time { min-width: 220px; }
@@ -1912,7 +1886,6 @@ body.app-blur-unfocus::after {
   inset: 0;
   pointer-events: none;
   opacity: 0.9;
-  animation: rd-aurora-drift 22s ease-in-out infinite;
 }
 @keyframes rd-aurora-drift {
   0%,100% { transform: translate3d(0,0,0)   scale(1);   }
@@ -1975,7 +1948,8 @@ body.app-blur-unfocus::after {
   0%,100% { opacity: 1; transform: scale(1);   }
   50%     { opacity: 0.55; transform: scale(0.85); }
 }
-.rd-pulse { animation: rd-pulse-soft 1.8s ease-in-out infinite; }
+/* (estático: animar box-shadow repinta en cada frame) */
+.rd-pulse { box-shadow: 0 0 0 3px rgba(244,63,94,0.18); }
 @keyframes rd-pulse-soft {
   0%,100% { box-shadow: 0 0 0 0 rgba(244,63,94,0.35); }
   50%     { box-shadow: 0 0 0 8px rgba(244,63,94,0);  }
@@ -2091,6 +2065,11 @@ html.cp-quiet *, html.cp-quiet *::before, html.cp-quiet *::after {
   animation-play-state: paused !important;
 }
 
+/* Barra de progreso indeterminada (aviso útil mientras se sube/guarda algo): solo transform,
+   la mueve la tarjeta gráfica sin trabajo del hilo principal. */
+@keyframes cp-indeterminate { from { transform: translateX(-40%); } to { transform: translateX(140%); } }
+.cp-indeterminate { animation: cp-indeterminate 1.2s ease-in-out infinite; }
+
 /* Formulario de reserva (claro) en modo oscuro */
 [data-dark="true"] .cp-rf { background-color: #151726 !important; border-color: rgba(255,255,255,0.06) !important; }
 [data-dark="true"] .cp-rf .bg-slate-50,
@@ -2102,7 +2081,8 @@ html.cp-quiet *, html.cp-quiet *::before, html.cp-quiet *::after {
 [data-dark="true"] .cp-rf .hover\:bg-slate-100:hover,
 [data-dark="true"] .cp-rf .hover\:bg-slate-50:hover { background-color: rgba(255,255,255,0.06) !important; }
 
-/* Formulario de reserva: brillo que recorre el botón / barra */
+/* Formulario de reserva: brillo que recorre el botón / barra (solo transform, en el
+   compositor; marca «listo para guardar» / «pagado») */
 .cp-rf-shine { position: relative; overflow: hidden; }
 .cp-rf-shine::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
@@ -2111,6 +2091,7 @@ html.cp-quiet *, html.cp-quiet *::before, html.cp-quiet *::after {
 }
 @keyframes cpRfShine { 0%, 55% { transform: translateX(-120%); } 100% { transform: translateX(120%); } }
 [data-animations="false"] .cp-rf-shine::after, html.cp-quiet .cp-rf-shine::after { animation: none; display: none; }
+@media (prefers-reduced-motion: reduce) { .cp-rf-shine::after { display: none; } }
 [data-dark="true"] .cp-rf .bg-amber-50 { background-color: rgba(245,158,11,0.10) !important; }
 [data-dark="true"] .cp-rf .bg-emerald-50 { background-color: rgba(16,185,129,0.10) !important; }
 [data-dark="true"] .cp-rf .border-amber-200 { border-color: rgba(245,158,11,0.3) !important; }

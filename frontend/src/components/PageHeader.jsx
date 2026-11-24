@@ -1,8 +1,12 @@
+import { memo } from "react";
 import { motion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 
 /**
  * Animated page header shared across internal pages.
+ *
+ * Rendimiento: solo una entrada corta (opacidad + desplazamiento). Antes tenía 5 bucles
+ * infinitos (halo, flotación, dos barridos de luz y destello) en todas las pantallas.
  *
  * Props:
  *  - icon: lucide-react icon component
@@ -13,7 +17,7 @@ import { Sparkles } from "lucide-react";
  *  - right: ReactNode rendered on the right (buttons, filters, etc.)
  *  - className: extra classes for the wrapper
  */
-export default function PageHeader({
+function PageHeader({
   icon: Icon,
   title,
   subtitle,
@@ -23,32 +27,22 @@ export default function PageHeader({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: -14 }}
+      initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
       className={`flex flex-wrap items-center justify-between gap-4 mb-8 ${className}`}
       data-testid="page-header"
     >
       <div className="flex items-center gap-4 min-w-0">
         {Icon && (
           <motion.div
-            initial={{ scale: 0, rotate: -25, opacity: 0 }}
-            animate={{ scale: 1, rotate: 0, opacity: 1 }}
-            transition={{ type: "spring", stiffness: 220, damping: 14, delay: 0.05 }}
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
             className="relative shrink-0"
           >
-            {/* Pulsing halo — opacity 0 en ambos extremos del loop para que el
-                reinicio del ping sea invisible (evita el parpadeo/destello). */}
-            <motion.span
-              className="absolute inset-0 rounded-2xl"
-              style={{ background: gradient, willChange: "transform, opacity" }}
-              animate={{ scale: [1, 1.3, 1.6], opacity: [0, 0.35, 0] }}
-              transition={{ duration: 2.4, repeat: Infinity, ease: "easeOut" }}
-            />
             {/* Icon tile */}
             <motion.div
-              animate={{ y: [0, -3, 0] }}
-              transition={{ duration: 3.2, repeat: Infinity, ease: "easeInOut" }}
               whileHover={{ rotate: [0, -8, 8, 0], scale: 1.06 }}
               className="relative w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg overflow-hidden"
               style={{
@@ -57,70 +51,35 @@ export default function PageHeader({
               }}
             >
               <Icon size={20} className="text-white relative z-10" strokeWidth={2.2} />
-              {/* Barrido de luz sobre el icono */}
-              <motion.span
-                className="absolute inset-0 pointer-events-none"
-                style={{
-                  background: "linear-gradient(115deg, transparent 30%, rgba(255,255,255,0.75) 50%, transparent 70%)",
-                }}
-                animate={{ x: ["-120%", "120%"] }}
-                transition={{ duration: 1.8, repeat: Infinity, repeatDelay: 2.4, ease: "easeInOut" }}
-              />
             </motion.div>
             {/* Sparkle chip */}
-            <motion.span
-              className="absolute -top-1 -right-1 text-amber-300"
-              animate={{
-                rotate: [0, 18, 0],
-                scale: [1, 1.25, 1],
-                opacity: [0.55, 1, 0.55],
-              }}
-              transition={{ duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
-            >
+            <span className="absolute -top-1 -right-1 text-amber-300" style={{ opacity: 0.8 }}>
               <Sparkles size={11} strokeWidth={2.5} fill="currentColor" />
-            </motion.span>
+            </span>
           </motion.div>
         )}
 
         <div className="min-w-0">
-          <motion.h1
-            initial={{ opacity: 0, x: -12, filter: "blur(4px)" }}
-            animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
-            transition={{ duration: 0.5, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+          <h1
             className="relative text-4xl sm:text-5xl font-black gradient-text tracking-tight leading-none overflow-hidden"
             style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
           >
             {title}
-            {/* Barrido de luz sobre el título */}
-            <motion.span
-              className="absolute inset-0 pointer-events-none"
-              style={{
-                background: "linear-gradient(110deg, transparent 35%, rgba(255,255,255,0.65) 50%, transparent 65%)",
-                mixBlendMode: "screen",
-              }}
-              animate={{ x: ["-110%", "150%"] }}
-              transition={{ duration: 2.2, repeat: Infinity, repeatDelay: 3.5, ease: "easeInOut", delay: 0.8 }}
-            />
-          </motion.h1>
+          </h1>
 
-          {/* Animated underline accent */}
+          {/* Underline accent */}
           <motion.div
-            initial={{ scaleX: 0, opacity: 0 }}
-            animate={{ scaleX: 1, opacity: 1 }}
-            transition={{ duration: 0.55, delay: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            initial={{ scaleX: 0 }}
+            animate={{ scaleX: 1 }}
+            transition={{ duration: 0.25, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
             style={{ background: gradient, transformOrigin: "left" }}
             className="h-[3px] w-16 rounded-full mt-2"
           />
 
           {subtitle && (
-            <motion.p
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.28, duration: 0.35 }}
-              className="text-sm text-slate-500 font-semibold mt-2"
-            >
+            <p className="text-sm text-slate-500 font-semibold mt-2">
               {subtitle}
-            </motion.p>
+            </p>
           )}
         </div>
       </div>
@@ -133,3 +92,5 @@ export default function PageHeader({
     </motion.div>
   );
 }
+
+export default memo(PageHeader);

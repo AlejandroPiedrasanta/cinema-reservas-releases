@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, memo } from "react";
 import DataLocation from "@/components/DataLocation";
 import BackupsSimple from "@/components/BackupsSimple";
 import { createPortal } from "react-dom";
@@ -45,13 +45,17 @@ import { DesktopAppSection } from "@/components/DesktopAppSection";
 
 const BASE = window.__API_BASE_URL__ || process.env.REACT_APP_BACKEND_URL;
 
-// ─── Countdown helper ────────────────────────────────────────────────────────
-function useCountdown(targetDate) {
+// ─── Countdown del próximo respaldo ──────────────────────────────────────────
+// Rendimiento: antes era un hook en la página que la volvía a dibujar ENTERA (miles de
+// líneas) cada segundo, y el texto ni siquiera se mostraba. Ahora es un componente mínimo:
+// solo él se actualiza cada segundo, y solo si se pinta (y no con la ventana oculta).
+const BackupCountdown = memo(function BackupCountdown({ target }) {
   const [display, setDisplay] = useState("");
   useEffect(() => {
-    if (!targetDate) { setDisplay(""); return; }
+    if (!target) { setDisplay(""); return; }
     const update = () => {
-      const diff = targetDate - Date.now();
+      if (document.hidden) return;
+      const diff = target - Date.now();
       if (diff <= 0) { setDisplay("ahora"); return; }
       const h = Math.floor(diff / 3_600_000);
       const m = Math.floor((diff % 3_600_000) / 60_000);
@@ -63,9 +67,9 @@ function useCountdown(targetDate) {
     update();
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
-  }, [targetDate]);
+  }, [target]);
   return display;
-}
+});
 
 // ─── Time-ago helper ─────────────────────────────────────────────────────────
 function timeAgo(date) {
@@ -78,6 +82,16 @@ function timeAgo(date) {
   if (h < 24) return `hace ${h}h`;
   return `hace ${Math.floor(h / 24)}d`;
 }
+
+// «hace X min» del último respaldo: se refresca solo (cada 15 s) sin redibujar la página
+const LastBackupAgo = memo(function LastBackupAgo({ at }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => { if (!document.hidden) tick((n) => n + 1); }, 15_000);
+    return () => clearInterval(id);
+  }, []);
+  return timeAgo(at) || "hace unos segundos";
+});
 
 // ─── Collapsible body wrapper ────────────────────────────────────────────────
 function CollapseBody({ open, children }) {
@@ -131,14 +145,7 @@ export default function DatabasePage() {
 
   // ── Auto-backup ────────────────────────────────────────────────────────────
   const autoBackup = useAutoBackup(`${BASE}/api/backup/download`);
-  const countdown  = useCountdown(autoBackup.nextBackup);
-  const [lastAgoDisplay, setLastAgoDisplay] = useState("");
-
-  useEffect(() => {
-    setLastAgoDisplay(timeAgo(autoBackup.lastBackup));
-    const id = setInterval(() => setLastAgoDisplay(timeAgo(autoBackup.lastBackup)), 15_000);
-    return () => clearInterval(id);
-  }, [autoBackup.lastBackup]);
+  // (cuenta atrás y «hace X min»: componentes BackupCountdown / LastBackupAgo, ver arriba)
 
   // Notify on each auto-backup
   const prevCountRef = useRef(autoBackup.backupCount);
@@ -1558,29 +1565,8 @@ export default function DatabasePage() {
                   {/* Dot pattern base */}
                   <div className="absolute inset-0 opacity-[0.08]" style={{ backgroundImage: "radial-gradient(circle at 20% 30%, white 1px, transparent 1px)", backgroundSize: "24px 24px" }} />
 
-                  {/* Sweep animation during upload */}
-                  {cloudBackup.phase === "upload" && (
-                    <motion.div
-                      initial={{ x: "-100%" }} animate={{ x: "200%" }}
-                      transition={{ duration: 1.8, repeat: Infinity, ease: "linear" }}
-                      className="absolute inset-y-0 w-1/3"
-                      style={{ background: "linear-gradient(90deg, transparent, rgba(94,234,212,0.25), transparent)" }} />
-                  )}
-
-                  {/* Rising particles during upload */}
-                  {cloudBackup.phase === "upload" && (
-                    <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                      {[0, 1, 2, 3, 4].map((i) => (
-                        <motion.span
-                          key={i}
-                          initial={{ y: 60, opacity: 0, x: 20 + i * 60 }}
-                          animate={{ y: -20, opacity: [0, 1, 0] }}
-                          transition={{ duration: 1.6, repeat: Infinity, delay: i * 0.25, ease: "easeOut" }}
-                          className="absolute bottom-0 w-1 h-1 rounded-full bg-teal-300 shadow-[0_0_8px_rgba(94,234,212,0.9)]"
-                        />
-                      ))}
-                    </div>
-                  )}
+                  {/* (barrido y partículas durante la subida: quitados; el progreso lo indican
+                      el spinner y la barra de abajo) */}
 
                   <div className="relative flex items-center gap-4 min-w-0 z-10">
                     <div className="w-11 h-11 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center shrink-0 group-hover:bg-white/15 transition-colors">
@@ -1591,15 +1577,15 @@ export default function DatabasePage() {
                           </motion.div>
                         )}
                         {cloudBackup.phase === "upload" && (
-                          <motion.div key="u" initial={{ y: 10, opacity: 0 }} animate={{ y: [-2, -6, -2], opacity: 1 }}
-                            transition={{ y: { duration: 1.4, repeat: Infinity, ease: "easeInOut" }, opacity: { duration: 0.3 } }}
+                          <motion.div key="u" initial={{ y: 6, opacity: 0 }} animate={{ y: -2, opacity: 1 }}
+                            transition={{ duration: 0.2 }}
                             exit={{ opacity: 0 }}>
                             <CloudUpload size={22} strokeWidth={2.4} className="text-teal-200" />
                           </motion.div>
                         )}
                         {cloudBackup.phase === "done" && (
-                          <motion.div key="d" initial={{ scale: 0.5, rotate: -30 }} animate={{ scale: 1, rotate: 0 }} exit={{ opacity: 0 }}
-                            transition={{ type: "spring", stiffness: 300, damping: 15 }}>
+                          <motion.div key="d" initial={{ scale: 0.8, rotate: -15 }} animate={{ scale: 1, rotate: 0 }} exit={{ opacity: 0 }}
+                            transition={{ duration: 0.22, ease: "easeOut" }}>
                             <CheckCircle size={22} strokeWidth={2.6} className="text-emerald-300" />
                           </motion.div>
                         )}
@@ -1638,12 +1624,11 @@ export default function DatabasePage() {
                 {/* Barra de progreso indeterminada */}
                 <AnimatePresence>
                   {(cloudBackup.phase === "prepare" || cloudBackup.phase === "upload") && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                       className="mt-2 h-1 rounded-full bg-slate-100 overflow-hidden">
-                      <motion.div
-                        initial={{ x: "-40%" }} animate={{ x: "140%" }}
-                        transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
-                        className="h-full w-1/3 rounded-full"
+                      {/* progreso indeterminado: animación CSS solo con transform (en la tarjeta gráfica) */}
+                      <div
+                        className="h-full w-1/3 rounded-full cp-indeterminate"
                         style={{ background: "linear-gradient(90deg, #0f766e, #14b8a6, #0f766e)" }} />
                     </motion.div>
                   )}
@@ -1682,12 +1667,12 @@ export default function DatabasePage() {
                 )}
 
                 {/* Confirmación último respaldo local */}
-                {!cloudBackup.phase && (autoBackup.backupCount > 0 || lastAgoDisplay) && (
+                {!cloudBackup.phase && (autoBackup.backupCount > 0 || !!autoBackup.lastBackup) && (
                   <div className="mt-3 flex items-center gap-3 bg-emerald-50/50 border border-emerald-200/70 rounded-2xl px-4 py-2.5">
                     <CheckCircle size={14} className="text-emerald-600 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-[11px] font-bold text-slate-700">
-                        Último respaldo local: <span className="text-emerald-700">{lastAgoDisplay || "hace unos segundos"}</span>
+                        Último respaldo local: <span className="text-emerald-700"><LastBackupAgo at={autoBackup.lastBackup} /></span>
                       </p>
                       <p className="text-[10px] text-slate-400 font-mono">→ backups/ · junto a la app</p>
                     </div>
@@ -1747,10 +1732,11 @@ export default function DatabasePage() {
                         <>
                           <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
                             <motion.div
-                              initial={{ width: 0 }}
-                              animate={{ width: `${Math.max(2, dbStats.used_pct)}%` }}
-                              transition={{ duration: 0.8 }}
-                              className={`h-full rounded-full ${dbStats.used_pct > 85 ? "bg-red-500" : dbStats.used_pct > 60 ? "bg-amber-500" : "bg-emerald-500"}`}
+                              initial={{ scaleX: 0 }}
+                              animate={{ scaleX: Math.min(100, Math.max(2, dbStats.used_pct)) / 100 }}
+                              transition={{ duration: 0.4 }}
+                              style={{ transformOrigin: "left" }}
+                              className={`h-full w-full rounded-full ${dbStats.used_pct > 85 ? "bg-red-500" : dbStats.used_pct > 60 ? "bg-amber-500" : "bg-emerald-500"}`}
                             />
                           </div>
                           <p className="text-[11px] font-bold text-emerald-600 mt-2">
@@ -3006,43 +2992,29 @@ export default function DatabasePage() {
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={() => setUploadModal(false)}
-            className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4"
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
             data-testid="upload-cloud-modal">
             <motion.div
               onClick={(e) => e.stopPropagation()}
-              initial={{ scale: 0.9, opacity: 0, y: 30 }}
+              initial={{ scale: 0.96, opacity: 0, y: 10 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              transition={{ type: "spring", stiffness: 240, damping: 22 }}
+              exit={{ scale: 0.96, opacity: 0, y: 8, transition: { duration: 0.14 } }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               className="w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
 
-              {/* Header animado con gradiente */}
+              {/* Header con gradiente */}
               <div className="relative overflow-hidden px-6 pt-6 pb-8 text-white"
                 style={{ background: "linear-gradient(130deg,#0ea5e9 0%,#6366f1 50%,#8b5cf6 100%)" }}>
-                {/* Orbes animados */}
-                <motion.div className="absolute -right-16 -top-16 w-56 h-56 rounded-full bg-white/10 blur-2xl"
-                  animate={{ scale: [1, 1.25, 1], rotate: [0, 45, 0] }}
-                  transition={{ duration: 6, repeat: Infinity }} />
-                <motion.div className="absolute -left-10 bottom-0 w-40 h-40 rounded-full bg-white/10 blur-2xl"
-                  animate={{ scale: [1, 1.2, 1] }} transition={{ duration: 5, repeat: Infinity, delay: 0.5 }} />
-
-                {/* Partículas subiendo */}
-                {[...Array(6)].map((_, i) => (
-                  <motion.div key={i}
-                    className="absolute w-1.5 h-1.5 rounded-full bg-white/60"
-                    style={{ left: `${15 + i * 13}%`, bottom: 10 }}
-                    animate={{ y: [-4, -110], opacity: [0, 1, 0] }}
-                    transition={{ duration: 2.6 + (i % 3) * 0.4, repeat: Infinity, delay: i * 0.35, ease: "easeOut" }}
-                  />
-                ))}
+                {/* Orbes (quietos; degradado radial en vez de blur-2xl) */}
+                <div className="absolute -right-16 -top-16 w-56 h-56 rounded-full"
+                  style={{ background: "radial-gradient(circle, rgba(255,255,255,0.12), transparent 70%)", transform: "scale(1.2)" }} />
+                <div className="absolute -left-10 bottom-0 w-40 h-40 rounded-full"
+                  style={{ background: "radial-gradient(circle, rgba(255,255,255,0.12), transparent 70%)", transform: "scale(1.2)" }} />
 
                 <div className="relative flex items-center gap-4">
-                  <motion.div
-                    animate={{ y: [0, -6, 0], rotate: [0, -6, 6, 0] }}
-                    transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                    className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center shadow-lg">
+                  <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center shadow-lg">
                     <CloudUpload size={28} className="text-white" strokeWidth={2} />
-                  </motion.div>
+                  </div>
                   <div className="min-w-0">
                     <p className="text-[10px] font-black uppercase tracking-widest text-white/70">Vista previa</p>
                     <p className="text-2xl font-black leading-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
@@ -3061,11 +3033,10 @@ export default function DatabasePage() {
               <div className="p-6 space-y-4 overflow-y-auto">
                 {uploadPreviewLoading ? (
                   <div className="flex flex-col items-center justify-center py-10 gap-3">
-                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.4, repeat: Infinity, ease: "linear" }}
-                      className="w-12 h-12 rounded-2xl flex items-center justify-center"
-                      style={{ background: "linear-gradient(135deg,#0ea5e9,#8b5cf6)" }}>
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center animate-spin"
+                      style={{ background: "linear-gradient(135deg,#0ea5e9,#8b5cf6)", animationDuration: "1.4s" }}>
                       <Database size={22} className="text-white" />
-                    </motion.div>
+                    </div>
                     <p className="text-sm font-bold text-slate-500">Analizando tus datos…</p>
                   </div>
                 ) : uploadPreview ? (
@@ -3203,11 +3174,11 @@ export default function DatabasePage() {
                                         data-testid={`breakdown-row-${name}`}
                                         className="relative rounded-xl bg-slate-50 px-3 py-2 overflow-hidden">
                                         <motion.div
-                                          className="absolute inset-y-0 left-0"
-                                          initial={{ width: 0 }}
-                                          animate={{ width: `${pct}%` }}
-                                          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                                          style={{ background: "linear-gradient(90deg, rgba(14,165,233,0.12), rgba(139,92,246,0.12))" }}
+                                          className="absolute inset-y-0 left-0 w-full"
+                                          initial={{ scaleX: 0 }}
+                                          animate={{ scaleX: Math.min(100, Math.max(0, Number(pct) || 0)) / 100 }}
+                                          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+                                          style={{ transformOrigin: "left", background: "linear-gradient(90deg, rgba(14,165,233,0.12), rgba(139,92,246,0.12))" }}
                                         />
                                         <div className="relative flex items-center justify-between gap-3">
                                           <div className="min-w-0">
@@ -3248,11 +3219,6 @@ export default function DatabasePage() {
                   data-testid="upload-cloud-confirm"
                   className="relative overflow-hidden px-5 py-2.5 rounded-2xl text-xs font-black text-white shadow-md disabled:opacity-60 flex items-center gap-2"
                   style={{ background: "linear-gradient(120deg,#0ea5e9,#6366f1,#8b5cf6)" }}>
-                  <motion.span
-                    className="absolute inset-0 pointer-events-none"
-                    initial={{ x: "-120%" }} animate={{ x: "120%" }}
-                    transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                    style={{ background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent)" }} />
                   <CloudUpload size={14} />
                   {optimizing ? "Subiendo…" : "Subir a la nube"}
                 </motion.button>
@@ -3275,8 +3241,8 @@ export default function DatabasePage() {
             className="fixed inset-0 z-[210] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
             onClick={cancelRestorePreview}>
             <motion.div
-              initial={{ scale: 0.92, y: 20, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.92, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 280, damping: 24 }}
+              initial={{ scale: 0.96, y: 10, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} exit={{ scale: 0.96, opacity: 0, transition: { duration: 0.14 } }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               onClick={(e) => e.stopPropagation()}
               className="relative w-full max-w-2xl bg-white rounded-[28px] shadow-2xl overflow-hidden border border-slate-200">
               {/* Franja top */}
@@ -3422,16 +3388,15 @@ export default function DatabasePage() {
             data-testid="backup-modal"
             className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
             <motion.div
-              initial={{ scale: 0.85, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 280, damping: 22 }}
+              initial={{ scale: 0.96, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0, transition: { duration: 0.14 } }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               className="bg-white rounded-3xl p-8 mx-4 max-w-sm w-full text-center shadow-2xl">
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1.4, repeat: Infinity, ease: "linear" }}
-                className="w-16 h-16 mx-auto mb-5 rounded-2xl flex items-center justify-center"
-                style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)" }}>
+              {/* spinner CSS (solo transform) */}
+              <div
+                className="w-16 h-16 mx-auto mb-5 rounded-2xl flex items-center justify-center animate-spin"
+                style={{ background: "linear-gradient(135deg,#6366f1,#8b5cf6)", animationDuration: "1.4s" }}>
                 <Database size={30} className="text-white" />
-              </motion.div>
+              </div>
               <p className="text-lg font-black text-slate-800" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
                 Haciendo copia de seguridad completa…
               </p>
@@ -3439,12 +3404,9 @@ export default function DatabasePage() {
                 Respaldando todas tus reservas, socios, diseños y configuración. No cierres la ventana.
               </p>
               <div className="mt-5 h-2 rounded-full bg-slate-100 overflow-hidden">
-                <motion.div
-                  className="h-full rounded-full"
-                  style={{ background: "linear-gradient(90deg,#6366f1,#8b5cf6)" }}
-                  animate={{ x: ["-40%", "140%"] }}
-                  transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
-                  initial={{ width: "40%" }}
+                <div
+                  className="h-full rounded-full cp-indeterminate"
+                  style={{ background: "linear-gradient(90deg,#6366f1,#8b5cf6)", width: "40%", animationDuration: "1.1s" }}
                 />
               </div>
             </motion.div>
@@ -3473,11 +3435,10 @@ export default function DatabasePage() {
               {/* Header con gradiente + versiones */}
               <div className="px-6 pt-6 pb-5 text-white relative overflow-hidden"
                 style={{ background: "linear-gradient(135deg,#0ea5e9 0%,#6366f1 100%)" }}>
-                {/* Decoración animada */}
-                <motion.div
-                  className="absolute -right-12 -top-12 w-40 h-40 rounded-full bg-white/10 blur-2xl"
-                  animate={{ scale: [1, 1.2, 1] }}
-                  transition={{ duration: 4, repeat: Infinity }}
+                {/* Decoración (quieta; degradado radial en vez de blur-2xl) */}
+                <div
+                  className="absolute -right-12 -top-12 w-40 h-40 rounded-full"
+                  style={{ background: "radial-gradient(circle, rgba(255,255,255,0.12), transparent 70%)", transform: "scale(1.2)" }}
                 />
                 <div className="relative">
                   <div className="flex items-center gap-3">
@@ -3496,19 +3457,19 @@ export default function DatabasePage() {
                     className="mt-4 grid grid-cols-3 gap-2 items-stretch"
                     data-testid="github-select-version-compare"
                   >
-                    <div className="flex flex-col justify-center bg-white/10 border border-white/15 rounded-xl p-2.5 text-center backdrop-blur-sm min-h-[54px]">
+                    <div className="flex flex-col justify-center bg-white/10 border border-white/15 rounded-xl p-2.5 text-center min-h-[54px]">
                       <p className="text-[9px] font-black uppercase tracking-wider text-white/70 mb-0.5">Local</p>
                       <p className="text-sm font-black font-mono truncate">
                         {ghPushVersionLoading ? "…" : `v${ghPushVersionInfo?.current_local || "?"}`}
                       </p>
                     </div>
-                    <div className="flex flex-col justify-center bg-white/10 border border-white/15 rounded-xl p-2.5 text-center backdrop-blur-sm min-h-[54px]">
+                    <div className="flex flex-col justify-center bg-white/10 border border-white/15 rounded-xl p-2.5 text-center min-h-[54px]">
                       <p className="text-[9px] font-black uppercase tracking-wider text-white/70 mb-0.5">GitHub</p>
                       <p className="text-sm font-black font-mono truncate">
                         {ghPushVersionLoading ? "…" : `v${ghPushVersionInfo?.current_remote || "?"}`}
                       </p>
                     </div>
-                    <div className="flex flex-col justify-center bg-emerald-400/25 border border-emerald-300/50 rounded-xl p-2.5 text-center backdrop-blur-sm min-h-[54px]">
+                    <div className="flex flex-col justify-center bg-emerald-400/25 border border-emerald-300/50 rounded-xl p-2.5 text-center min-h-[54px]">
                       <p className="text-[9px] font-black uppercase tracking-wider text-white mb-0.5">Próxima</p>
                       <p className="text-sm font-black font-mono text-white truncate">
                         {ghPushVersionLoading ? "…" : `v${ghPushVersionInfo?.next_auto_version || "?"}`}
@@ -3712,13 +3673,9 @@ export default function DatabasePage() {
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="text-sm font-black text-slate-900">{c.label}</p>
                               {c.slow && (
-                                <motion.span
-                                  animate={{ scale: [1, 1.05, 1] }}
-                                  transition={{ duration: 2, repeat: Infinity }}
-                                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-200 text-amber-900"
-                                >
+                                <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-200 text-amber-900">
                                   <Timer size={10} /> Lento (1–2 min)
-                                </motion.span>
+                                </span>
                               )}
                             </div>
                             <p className="text-xs text-slate-600 mt-0.5 leading-snug">{c.description}</p>

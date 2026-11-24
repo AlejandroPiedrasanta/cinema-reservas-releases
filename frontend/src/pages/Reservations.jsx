@@ -340,10 +340,10 @@ export default function Reservations({ embedded = false }) {
                 return (
                   <motion.div
                     key={r.id}
-                    initial={{ opacity: 0, y: 16 }}
+                    initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    transition={{ delay: idx * 0.035, type: "spring", stiffness: 220, damping: 22 }}
+                    exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                    transition={{ delay: Math.min(idx, 6) * 0.04, duration: 0.2, ease: "easeOut" }}
                     whileHover={{ scale: 1.008, x: 4 }}
                     className="group relative cursor-pointer"
                     onClick={() => navigate(`/reservaciones/${r.id}`)}
@@ -356,7 +356,7 @@ export default function Reservations({ embedded = false }) {
                     ></div>
                     {/* Hover glow background */}
                     <div
-                      className="absolute inset-0 rounded-3xl opacity-0 group-hover:opacity-100 blur-xl transition-opacity duration-500 pointer-events-none -z-10"
+                      className="absolute inset-0 rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none -z-10"
                       style={{ background: `linear-gradient(90deg, ${cfg.fg}12, transparent 60%)` }}
                     ></div>
 
@@ -433,10 +433,11 @@ export default function Reservations({ embedded = false }) {
                           {r.total_amount > 0 && (
                             <div className="w-28 h-1.5 bg-slate-100 rounded-full mt-1.5 overflow-hidden">
                               <motion.div
-                                initial={{ width: 0 }}
-                                animate={{ width: `${paidPercent}%` }}
-                                transition={{ duration: 0.8, delay: 0.2 + idx * 0.02, ease: "easeOut" }}
-                                className="h-full rounded-full theme-progress"
+                                initial={{ scaleX: 0 }}
+                                animate={{ scaleX: paidPercent / 100 }}
+                                transition={{ duration: 0.35, delay: Math.min(idx, 6) * 0.04, ease: "easeOut" }}
+                                style={{ transformOrigin: "left" }}
+                                className="h-full w-full rounded-full theme-progress"
                               />
                             </div>
                           )}

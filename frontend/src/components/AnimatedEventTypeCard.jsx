@@ -2,10 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { getEventConfig } from "@/lib/eventConfig";
 
+// Sin animaciones (ajuste «Animaciones» apagado o el sistema pide menos movimiento) o con la
+// ventana oculta, el número aparece directamente: el contador re-renderiza la tarjeta en cada frame.
+const skipMotion = () => {
+  try {
+    return document.documentElement.dataset.animations === "false" || document.hidden ||
+      (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  } catch { return false; }
+};
+
 function useCounter(target, duration = 900) {
-  const [n, setN] = useState(0);
+  const [n, setN] = useState(() => (skipMotion() ? target : 0));
   const raf = useRef(null);
   useEffect(() => {
+    if (skipMotion()) { setN(target); return undefined; }
     const start = performance.now();
     const tick = (t) => {
       const p = Math.min((t - start) / duration, 1);
@@ -40,14 +50,14 @@ export default function AnimatedEventTypeCard({ type, count, total, paidCount = 
   const cfg = getEventConfig(type);
   const Icon = cfg.icon;
   const pct = total > 0 ? Math.round((paidCount / total) * 100) : 0;
-  const num = useCounter(paidCount, 900 + index * 70);
+  const num = useCounter(paidCount, 500 + Math.min(index, 6) * 40);
   const isAllPaid = total > 0 && paidCount >= total;
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      initial={{ opacity: 0, y: 12, scale: 0.97 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.45, delay: index * 0.07, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.25, delay: Math.min(index, 6) * 0.04, ease: [0.22, 1, 0.36, 1] }}
       whileHover={{ y: -6, scale: 1.02, transition: { duration: 0.2 } }}
       className="relative overflow-hidden rounded-3xl bg-white cursor-default group"
       style={{
@@ -57,14 +67,13 @@ export default function AnimatedEventTypeCard({ type, count, total, paidCount = 
       }}
       data-testid={`event-type-card-${type.replace(/\s+/g, "-").toLowerCase()}`}
     >
-      {/* Corner color accent glow */}
-      <motion.div
+      {/* Corner color accent glow (quieto, opacidad media de la animación anterior) */}
+      <div
         className="absolute -right-16 -top-16 w-40 h-40 rounded-full pointer-events-none"
         style={{
           background: `radial-gradient(circle, ${hexA(cfg.fg, 0.28)}, transparent 70%)`,
+          opacity: 0.85,
         }}
-        animate={{ scale: [1, 1.15, 1], opacity: [0.7, 1, 0.7] }}
-        transition={{ duration: 3.6, repeat: Infinity, ease: "easeInOut", delay: index * 0.3 }}
       />
 
       {/* Top center pill accent */}
@@ -77,9 +86,9 @@ export default function AnimatedEventTypeCard({ type, count, total, paidCount = 
         {/* Header row: icon + type name */}
         <div className="flex items-center gap-3 mb-4">
           <motion.div
-            initial={{ scale: 0, rotate: -20 }}
-            animate={{ scale: 1, rotate: 0 }}
-            transition={{ type: "spring", stiffness: 240, damping: 14, delay: 0.1 + index * 0.07 }}
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.2, ease: "easeOut", delay: 0.05 + Math.min(index, 6) * 0.04 }}
             whileHover={{ rotate: [0, -8, 8, 0], transition: { duration: 0.5 } }}
             className="relative w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0"
             style={{
@@ -125,27 +134,20 @@ export default function AnimatedEventTypeCard({ type, count, total, paidCount = 
           className="h-2 rounded-full overflow-hidden"
           style={{ background: hexA(cfg.fg, 0.12) }}
         >
+          {/* Entra con scaleX (transform) en vez de animar width; sin brillo infinito */}
           <motion.div
             className="h-full rounded-full relative overflow-hidden"
-            initial={{ width: 0 }}
-            animate={{ width: `${pct}%` }}
-            transition={{ duration: 1.2, ease: [0.22, 1, 0.36, 1], delay: 0.3 + index * 0.07 }}
+            initial={{ scaleX: 0 }}
+            animate={{ scaleX: 1 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1], delay: 0.1 + Math.min(index, 6) * 0.04 }}
             style={{
+              width: `${pct}%`,
+              transformOrigin: "left",
               background: isAllPaid
                 ? "linear-gradient(90deg,#10b981,#22c55e)"
                 : `linear-gradient(90deg, ${cfg.fg}, ${hexA(cfg.fg, 0.7)})`,
             }}
-          >
-            {/* Shine sweep across the bar */}
-            <motion.div
-              className="absolute inset-y-0 w-1/2"
-              style={{
-                background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent)",
-              }}
-              animate={{ x: ["-100%", "220%"] }}
-              transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut", delay: 1 + index * 0.2 }}
-            />
-          </motion.div>
+          />
         </div>
 
         {/* Subtitle */}

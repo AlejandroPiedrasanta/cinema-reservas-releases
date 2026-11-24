@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -41,39 +41,8 @@ const TOUR_STEPS = [
     tips: ["Reinicia el tutorial cuando quieras", "Explora las demás secciones", "¡A trabajar!"] },
 ];
 
-// Partículas de fondo aleatorias
-const Particles = () => {
-  const particles = useMemo(() => Array.from({ length: 25 }, (_, i) => ({
-    id: i,
-    x: Math.random() * 100,
-    y: Math.random() * 100,
-    size: Math.random() * 4 + 2,
-    duration: Math.random() * 4 + 3,
-    delay: Math.random() * 2,
-  })), []);
-  return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {particles.map(p => (
-        <motion.div
-          key={p.id}
-          className="absolute rounded-full bg-white/40"
-          style={{ left: `${p.x}%`, top: `${p.y}%`, width: p.size, height: p.size }}
-          animate={{
-            y: [0, -30, 0],
-            opacity: [0.2, 0.8, 0.2],
-            scale: [1, 1.5, 1],
-          }}
-          transition={{
-            duration: p.duration,
-            delay: p.delay,
-            repeat: Infinity,
-            ease: "easeInOut",
-          }}
-        />
-      ))}
-    </div>
-  );
-};
+// Rendimiento: sin partículas flotantes ni pulsos infinitos (eran ~35 animaciones a la vez
+// durante el tutorial); el aspecto en reposo es el mismo.
 
 export default function WelcomeTour() {
   const { showTour, endTour } = useSettings();
@@ -201,55 +170,31 @@ export default function WelcomeTour() {
         {/* Backdrop / spotlight */}
         {rect ? (
           <>
-            <motion.div
-              initial={false}
-              animate={{ top: rect.top - 10, left: rect.left - 10, width: rect.width + 20, height: rect.height + 20 }}
-              transition={{ type: "spring", stiffness: 200, damping: 26 }}
+            {/* Foco: sigue al elemento sin animar tamaño/posición (la sombra de 9999px es cara de
+                redibujar en cada frame) */}
+            <div
               className="fixed rounded-2xl pointer-events-none"
               style={{
+                top: rect.top - 10, left: rect.left - 10, width: rect.width + 20, height: rect.height + 20,
                 boxShadow: "0 0 0 9999px rgba(15,23,42,0.75)",
                 border: "3px solid rgba(167,139,250,0.9)",
               }}
             >
-              {/* Pulso animado alrededor del target */}
-              <motion.div
-                className="absolute inset-0 rounded-2xl"
-                animate={{
-                  boxShadow: [
-                    "0 0 0 0 rgba(167,139,250,0.7)",
-                    "0 0 0 20px rgba(167,139,250,0)",
-                  ],
-                }}
-                transition={{ duration: 1.6, repeat: Infinity }}
-              />
-              {/* Doble pulso extra */}
-              <motion.div
-                className="absolute inset-0 rounded-2xl"
-                animate={{
-                  boxShadow: [
-                    "0 0 0 0 rgba(236,72,153,0.6)",
-                    "0 0 0 28px rgba(236,72,153,0)",
-                  ],
-                }}
-                transition={{ duration: 1.6, repeat: Infinity, delay: 0.4 }}
-              />
               {/* Puntos brillantes en las esquinas */}
               {[[0,0],[100,0],[0,100],[100,100]].map(([x,y], i) => (
-                <motion.div
+                <div
                   key={i}
                   className="absolute w-3 h-3 rounded-full bg-white"
                   style={{ left: `${x}%`, top: `${y}%`, transform: "translate(-50%,-50%)", boxShadow: "0 0 12px rgba(255,255,255,1)" }}
-                  animate={{ scale: [1, 1.6, 1], opacity: [0.7, 1, 0.7] }}
-                  transition={{ duration: 1.4, repeat: Infinity, delay: i * 0.12 }}
                 />
               ))}
-            </motion.div>
-            {/* Flecha animada apuntando al target si está lejos del card */}
+            </div>
+            {/* Flecha apuntando al target si está lejos del card */}
             {rect.top < window.innerHeight - 260 && rect.top + rect.height < window.innerHeight - 240 && (
               <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: [0, -8, 0] }}
-                transition={{ y: { duration: 1.2, repeat: Infinity, ease: "easeInOut" }, opacity: { duration: 0.4 } }}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
                 className="fixed pointer-events-none z-[210]"
                 style={{
                   top: rect.top + rect.height + 12,
@@ -264,42 +209,36 @@ export default function WelcomeTour() {
             )}
           </>
         ) : (
-          <div className="fixed inset-0" style={{ background: "radial-gradient(circle at 50% 50%, rgba(15,23,42,0.55) 0%, rgba(15,23,42,0.88) 80%)" }}>
-            <Particles />
-          </div>
+          <div className="fixed inset-0" style={{ background: "radial-gradient(circle at 50% 50%, rgba(15,23,42,0.55) 0%, rgba(15,23,42,0.88) 80%)" }} />
         )}
 
         {/* Card — épica con gradientes y animaciones */}
         <motion.div
           key={`card-${step}`}
-          initial={{ opacity: 0, y: 40, scale: 0.92, rotateX: -8 }}
-          animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
-          exit={{ opacity: 0, y: 20, scale: 0.95 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          initial={{ opacity: 0, y: 12, scale: 0.97 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 8, transition: { duration: 0.15 } }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[min(500px,94vw)] rounded-3xl overflow-hidden"
           style={{
             boxShadow: "0 32px 100px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.1)",
-            transformStyle: "preserve-3d",
-            perspective: "1000px",
           }}
           data-testid="tour-card"
         >
           {/* Header con gradiente dinámico */}
           <div className={`relative bg-gradient-to-br ${current.gradient} p-5 overflow-hidden`}>
-            {/* Brillos decorativos */}
-            <motion.div
+            {/* Brillos decorativos (quietos, con la opacidad media que tenía la animación) */}
+            <div
               className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/20"
-              animate={{ scale: [1, 1.3, 1], opacity: [0.3, 0.5, 0.3] }}
-              transition={{ duration: 3, repeat: Infinity }}
+              style={{ opacity: 0.4 }}
             />
-            <motion.div
+            <div
               className="absolute -bottom-6 -left-6 w-32 h-32 rounded-full bg-white/15"
-              animate={{ scale: [1, 1.4, 1], opacity: [0.2, 0.4, 0.2] }}
-              transition={{ duration: 3.5, repeat: Infinity, delay: 0.5 }}
+              style={{ opacity: 0.3 }}
             />
 
             <div className="relative flex items-center justify-between mb-3">
-              <span className="flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-full text-slate-900 bg-white/90 backdrop-blur">
+              <span className="flex items-center gap-1.5 text-[10px] font-black px-2.5 py-1 rounded-full text-slate-900 bg-white/90">
                 <Sparkles size={10} /> Paso {step + 1} / {total}
               </span>
               <button onClick={endTour} data-testid="tour-skip-btn"
@@ -309,27 +248,18 @@ export default function WelcomeTour() {
             </div>
 
             <div className="relative flex items-start gap-3">
-              {/* Icono animado con anillos */}
+              {/* Icono */}
               <div className="relative flex-shrink-0">
-                <motion.div
-                  className="absolute inset-0 rounded-2xl bg-white/30"
-                  animate={{ scale: [1, 1.4, 1], opacity: [0.6, 0, 0.6] }}
-                  transition={{ duration: 1.8, repeat: Infinity }}
-                />
-                <motion.div
-                  className="relative w-14 h-14 rounded-2xl bg-white/25 backdrop-blur flex items-center justify-center"
-                  animate={{ rotate: [0, 8, -8, 0], scale: [1, 1.08, 1] }}
-                  transition={{ duration: 2.4, repeat: Infinity }}
-                >
+                <div className="relative w-14 h-14 rounded-2xl bg-white/25 flex items-center justify-center">
                   <Icon size={28} className="text-white" strokeWidth={2} />
-                </motion.div>
+                </div>
               </div>
 
               <div className="flex-1 min-w-0 text-white">
                 <motion.h3
                   key={`title-${step}`}
                   initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.15 }}
+                  transition={{ delay: 0.08, duration: 0.2, ease: "easeOut" }}
                   className="text-xl font-black leading-tight"
                   style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
                 >
@@ -338,7 +268,7 @@ export default function WelcomeTour() {
                 <motion.p
                   key={`desc-${step}`}
                   initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.25 }}
+                  transition={{ delay: 0.12, duration: 0.2, ease: "easeOut" }}
                   className="text-sm text-white/90 leading-snug mt-1"
                 >
                   {current.desc}
@@ -354,33 +284,22 @@ export default function WelcomeTour() {
               {current.tips?.map((tip, i) => (
                 <motion.span
                   key={`${step}-tip-${i}`}
-                  initial={{ opacity: 0, scale: 0.8, y: 8 }}
+                  initial={{ opacity: 0, scale: 0.96, y: 8 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
-                  transition={{ delay: 0.3 + i * 0.08, type: "spring", stiffness: 300 }}
+                  transition={{ delay: 0.15 + Math.min(i, 6) * 0.04, duration: 0.2, ease: "easeOut" }}
                   className="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-100 text-slate-700 flex items-center gap-1"
                 >
-                  <motion.span
-                    animate={{ scale: [1, 1.4, 1] }}
-                    transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.2 }}
-                    className="w-1.5 h-1.5 rounded-full bg-emerald-500"
-                  />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   {tip}
                 </motion.span>
               ))}
             </div>
 
-            {/* Progress bar con gradiente */}
+            {/* Progress bar con gradiente (transición CSS corta, sin brillo infinito) */}
             <div className="relative h-2 rounded-full bg-slate-100 overflow-hidden">
-              <motion.div
-                className={`h-full rounded-full bg-gradient-to-r ${current.gradient}`}
-                animate={{ width: `${((step + 1) / total) * 100}%` }}
-                transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-              />
-              {/* Brillo que recorre */}
-              <motion.div
-                className="absolute top-0 h-full w-8 bg-white/50 blur-sm"
-                animate={{ left: ["-10%", "100%"] }}
-                transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+              <div
+                className={`h-full rounded-full bg-gradient-to-r ${current.gradient} transition-[width] duration-300 ease-out`}
+                style={{ width: `${((step + 1) / total) * 100}%` }}
               />
             </div>
 
@@ -405,12 +324,7 @@ export default function WelcomeTour() {
               >
                 {isLast ? (
                   <>
-                    <motion.span
-                      animate={{ rotate: [0, 20, -20, 0] }}
-                      transition={{ duration: 1, repeat: Infinity }}
-                    >
-                      🎉
-                    </motion.span>
+                    <span>🎉</span>
                     ¡Terminar!
                   </>
                 ) : (

@@ -23,8 +23,15 @@ const STAT_GRADIENTS = [
   "linear-gradient(135deg,#a855f7,#ec4899)",
 ];
 
-const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.08 } } };
-const item = { hidden: { opacity: 0, y: 24, filter: "blur(4px)" }, show: { opacity: 1, y: 0, filter: "blur(0px)", transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] } } };
+// Entradas baratas: solo opacidad + 12px, sin blur (el blur obligaba a redibujar cada tarjeta)
+const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2 } } };
+const item = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } };
+
+// Sin animaciones (ajuste «Animaciones» apagado o el sistema pide menos movimiento)
+const motionOff = () =>
+  typeof document !== "undefined" &&
+  (document.documentElement.dataset.animations === "false" ||
+    (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches));
 
 function StatCard({ icon: Icon, label, value, sub, gradient }) {
   return (
@@ -32,14 +39,6 @@ function StatCard({ icon: Icon, label, value, sub, gradient }) {
       <div className="flex items-start justify-between mb-4">
         <div className="relative w-10 h-10">
           <motion.div
-            className="absolute inset-0 rounded-2xl"
-            style={{ background: gradient }}
-            animate={{ scale: [1, 1.55], opacity: [0.35, 0] }}
-            transition={{ duration: 2.4, repeat: Infinity, ease: "easeOut" }}
-          />
-          <motion.div
-            animate={{ y: [0, -4, 0] }}
-            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
             whileHover={{ rotate: [0, -10, 10, 0], scale: 1.12, transition: { duration: 0.45 } }}
             className="relative w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm"
             style={{ background: gradient }}
@@ -47,14 +46,14 @@ function StatCard({ icon: Icon, label, value, sub, gradient }) {
             <Icon size={16} strokeWidth={1.5} className="text-white" />
           </motion.div>
         </div>
-        <motion.span animate={{ y: [0, -3, 0] }} transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}>
+        <span>
           <TrendingUp size={12} className="text-slate-300 group-hover:text-emerald-500 transition-colors" />
-        </motion.span>
+        </span>
       </div>
       <motion.p
-        initial={{ opacity: 0, scale: 0.9 }}
+        initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ type: "spring", stiffness: 220, damping: 18, delay: 0.15 }}
+        transition={{ duration: 0.2, ease: "easeOut", delay: 0.1 }}
         className="text-3xl font-black text-slate-900 tracking-tight mb-1" style={{ fontFamily: 'Cabinet Grotesk, sans-serif' }}>{value}</motion.p>
       <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-0.5">{label}</p>
       {sub && <p className="text-xs text-slate-400">{sub}</p>}
@@ -67,6 +66,7 @@ function AnimatedCounter({ target, duration = 900 }) {
   const raf = useRef(null);
   useEffect(() => {
     if (!target) { setDisplay(0); return; }
+    if (motionOff()) { setDisplay(target); return; }
     const start = Date.now();
     const animate = () => {
       const p = Math.min((Date.now() - start) / duration, 1);
@@ -110,9 +110,9 @@ function EventTypeCard({ type, count, total, index }) {
 
       {/* Icon */}
       <motion.div
-        initial={{ scale: 0, rotate: -20 }}
-        animate={{ scale: 1, rotate: 0 }}
-        transition={{ type: "spring", stiffness: 260, damping: 18, delay: 0.08 + index * 0.07 }}
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.2, ease: "easeOut", delay: Math.min(index, 6) * 0.04 }}
         className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4"
         style={{ background: cfg.fg + "1c" }}
       >
@@ -135,11 +135,12 @@ function EventTypeCard({ type, count, total, index }) {
         className="mt-3.5 h-1.5 rounded-full overflow-hidden"
         style={{ background: cfg.fg + "20" }}
       >
+        {/* Relleno con scaleX (en la tarjeta gráfica) en vez de animar el ancho */}
         <motion.div
-          initial={{ width: 0 }}
-          animate={{ width: `${pct}%` }}
-          transition={{ duration: 1.3, ease: [0.22, 1, 0.36, 1], delay: 0.4 + index * 0.07 }}
-          style={{ background: cfg.fg }}
+          initial={{ scaleX: 0 }}
+          animate={{ scaleX: 1 }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1], delay: 0.1 + Math.min(index, 6) * 0.04 }}
+          style={{ background: cfg.fg, width: `${pct}%`, transformOrigin: "0% 50%" }}
           className="h-full rounded-full"
         />
       </div>
@@ -289,10 +290,9 @@ export default function Dashboard() {
       <AnimatePresence>
         {!loading && nextEvent && isEventSoon && (
           <motion.div
-            initial={{ opacity: 0, y: -20, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ type: "spring", stiffness: 260, damping: 22 }}
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0, transition: { duration: 0.25, ease: "easeOut" } }}
+            exit={{ opacity: 0, y: -12, transition: { duration: 0.15 } }}
             className="mb-6 rounded-2xl overflow-hidden shadow-lg cursor-pointer relative"
             onClick={() => navigate(`/reservaciones/${nextEvent.id}`)}
             data-testid="dashboard-urgent-event-notification"
@@ -304,20 +304,13 @@ export default function Dashboard() {
                   : "linear-gradient(90deg,#f59e0b,#eab308)",
             }}
           >
-            <motion.div
-              className="absolute inset-0 pointer-events-none"
-              style={{ background: "rgba(255,255,255,0.18)" }}
-              animate={{ opacity: [0, 0.55, 0] }}
-              transition={{ duration: 1.9, repeat: Infinity, ease: "easeInOut" }}
-            />
             <div className="relative flex items-center gap-3 px-5 py-3.5 text-white">
-              <motion.div
-                animate={{ rotate: [0, -14, 14, 0], scale: [1, 1.15, 1] }}
-                transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
-                className="w-11 h-11 rounded-xl bg-white/25 flex items-center justify-center flex-shrink-0 backdrop-blur-sm"
+              {/* Campana: aviso real de urgencia → pulso CSS (solo opacidad) cuando el evento es HOY */}
+              <div
+                className={`w-11 h-11 rounded-xl bg-white/25 flex items-center justify-center flex-shrink-0 ${isEventToday ? "animate-pulse" : ""}`}
               >
                 <Bell size={19} strokeWidth={2.5} />
-              </motion.div>
+              </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[10px] font-black uppercase tracking-widest text-white/90 leading-none mb-1.5">
                   {isEventToday
@@ -331,11 +324,11 @@ export default function Dashboard() {
                   {nextEvent.event_time ? ` · ${nextEvent.event_time}` : ""}
                 </p>
               </div>
-              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/25 backdrop-blur-sm text-[11px] font-black flex-shrink-0">
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/25 text-[11px] font-black flex-shrink-0">
                 {NextIcon ? <NextIcon size={12} strokeWidth={2.4} /> : <CalendarDays size={12} />}
                 {nextEvent.venue || formatDate(nextEvent.event_date)}
               </div>
-              <div className="flex flex-col items-center px-3 py-1.5 rounded-xl bg-white/25 backdrop-blur-sm text-white flex-shrink-0 min-w-[62px]">
+              <div className="flex flex-col items-center px-3 py-1.5 rounded-xl bg-white/25 text-white flex-shrink-0 min-w-[62px]">
                 <span className="text-[9px] font-black uppercase tracking-widest opacity-90 leading-none">
                   {language === "es" ? "Faltan" : "In"}
                 </span>
@@ -392,9 +385,9 @@ export default function Dashboard() {
 
       {/* Recent reservations */}
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, delay: 0.3 }}
+        transition={{ duration: 0.25, delay: 0.1 }}
         className="glass rounded-3xl overflow-hidden relative"
       >
         <div className="flex items-center justify-between px-6 py-5 border-b border-white/40">
@@ -453,9 +446,9 @@ export default function Dashboard() {
                   language={language}
                   testId={`recent-row-${r.id}`}
                 >
-                  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.06 }}
-                    whileHover={{ y: -2, boxShadow: "0 8px 28px rgba(0,0,0,0.09)" }}
-                    className="w-full bg-white/60 border border-white/70 rounded-2xl p-5 cursor-pointer transition-all">
+                  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(idx, 6) * 0.04, duration: 0.2 }}
+                    whileHover={{ y: -2 }}
+                    className="w-full bg-white/60 border border-white/70 rounded-2xl p-5 cursor-pointer transition-shadow hover:shadow-[0_8px_28px_rgba(0,0,0,0.09)]">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ background: cfg.fg + "18" }}>
@@ -518,9 +511,8 @@ export default function Dashboard() {
                   language={language}
                   testId={`recent-row-${r.id}`}
                 >
-                  <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.35 + idx * 0.05 }}
-                    whileHover={{ backgroundColor: "rgba(255,255,255,0.35)" }}
-                    className="flex items-center gap-5 px-6 py-5 cursor-pointer transition-colors">
+                  <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 + Math.min(idx, 6) * 0.04, duration: 0.2 }}
+                    className="flex items-center gap-5 px-6 py-5 cursor-pointer transition-colors hover:bg-white/[0.35]">
                   <div className="flex items-center gap-3 w-[30%] min-w-0">
                     <div className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0" style={{ background: cfg.fg + "18" }}>
                       <EvIcon size={20} style={{ color: cfg.fg }} strokeWidth={1.8} />
@@ -572,9 +564,8 @@ export default function Dashboard() {
                   language={language}
                   testId={`recent-row-${r.id}`}
                 >
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: idx * 0.04 }}
-                    whileHover={{ backgroundColor: "rgba(255,255,255,0.5)" }}
-                    className="flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition-colors">
+                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: Math.min(idx, 6) * 0.04, duration: 0.2 }}
+                    className="flex items-center gap-3 px-3 py-2 rounded-xl cursor-pointer transition-colors hover:bg-white/[0.5]">
                   <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: cfg.fg }} />
                   <span className="text-sm font-black flex-1 truncate" style={{ color: cfg.fg }}>{r.event_type}</span>
                   {firstPartner && <span className="text-xs text-slate-500 truncate max-w-[100px]">{firstPartner.socio.name} · <span className={isPaid ? "text-emerald-600" : "text-amber-600"}>{formatCurrency(firstPartner.payment)}</span></span>}
@@ -607,9 +598,8 @@ export default function Dashboard() {
                   language={language}
                   testId={`recent-row-${r.id}`}
                 >
-                  <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.05 }}
-                    whileHover={{ backgroundColor: "rgba(255,255,255,0.35)" }}
-                    className="flex items-stretch cursor-pointer transition-colors overflow-hidden">
+                  <motion.div initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(idx, 6) * 0.04, duration: 0.2 }}
+                    className="flex items-stretch cursor-pointer transition-colors overflow-hidden hover:bg-white/[0.35]">
                   <div className="w-1.5 flex-shrink-0" style={{ background: cfg.fg }} />
                   <div className="flex items-center gap-5 px-5 py-4 flex-1">
                     <p className="text-xl font-black w-[28%] min-w-0 truncate" style={{ fontFamily: "Cabinet Grotesk, sans-serif", color: cfg.fg }}>{r.event_type || "Evento"}</p>
@@ -684,38 +674,34 @@ export default function Dashboard() {
                   testId={`recent-row-${r.id}`}
                 >
                 <motion.div
-                  initial={{ opacity: 0, y: 20, scale: 0.97 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ delay: 0.35 + idx * 0.08, type: "spring", stiffness: 180, damping: 22 }}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.1 + Math.min(idx, 6) * 0.04, duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
                   whileHover={{ y: -3, scale: 1.008 }}
                   className="group relative cursor-pointer"
                 >
-                  {/* Glow blur atrás en hover */}
-                  <motion.div
-                    className="absolute -inset-0.5 rounded-3xl opacity-0 group-hover:opacity-60 blur-xl transition-opacity duration-500 pointer-events-none"
-                    style={{ background: `linear-gradient(90deg, ${cfg.fg}55, transparent 70%)` }}
+                  {/* Brillo atrás en hover: degradado + sombra de color (sin filter: blur, que era caro) */}
+                  <div
+                    className="absolute -inset-0.5 rounded-3xl opacity-0 group-hover:opacity-60 transition-opacity duration-500 pointer-events-none"
+                    style={{ background: `linear-gradient(90deg, ${cfg.fg}55, transparent 70%)`, boxShadow: `-10px 0 30px -6px ${cfg.fg}66` }}
                   />
-                  {/* Sparkle animado si es HOY */}
+                  {/* Distintivo si es HOY */}
                   {isToday && (
-                    <motion.div
-                      className="absolute -top-2 -right-2 z-10"
-                      animate={{ rotate: [0, 15, -15, 0], scale: [1, 1.15, 1] }}
-                      transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-                    >
+                    <div className="absolute -top-2 -right-2 z-10">
                       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-rose-500 to-red-500 shadow-lg flex items-center justify-center border-2 border-white">
                         <Flame size={14} className="text-white" strokeWidth={2.5} />
                       </div>
-                    </motion.div>
+                    </div>
                   )}
 
-                  <div className="relative bg-white/60 backdrop-blur-md border border-white/70 group-hover:border-white/90 rounded-3xl px-4 py-4 shadow-sm group-hover:shadow-xl transition-all duration-300 overflow-hidden">
+                  <div className="relative bg-white/60 border border-white/70 group-hover:border-white/90 rounded-3xl px-4 py-4 shadow-sm group-hover:shadow-xl transition-all duration-300 overflow-hidden">
                     {/* Barra lateral coloreada del tipo */}
                     <motion.div
                       className="absolute left-0 top-0 bottom-0 w-1"
                       style={{ background: `linear-gradient(180deg, ${cfg.fg}, ${cfg.fg}88)` }}
                       initial={{ scaleY: 0 }}
                       animate={{ scaleY: 1 }}
-                      transition={{ delay: 0.4 + idx * 0.08, duration: 0.5 }}
+                      transition={{ delay: 0.15 + Math.min(idx, 6) * 0.04, duration: 0.25 }}
                     />
 
                     <div className="flex items-center gap-4">
@@ -725,30 +711,30 @@ export default function Dashboard() {
                         transition={{ duration: 0.5 }}
                         className="relative flex-shrink-0"
                       >
-                        <motion.div
+                        <div
                           className="relative w-16 h-16 sm:w-[72px] sm:h-[72px] rounded-2xl flex flex-col items-center justify-center shadow-md"
                           style={{
                             background: isToday
                               ? "linear-gradient(135deg, #f43f5e, #ef4444)"
                               : `linear-gradient(135deg, ${cfg.fg}, ${cfg.fg}bb)`,
+                            // HOY: brillo rojo fijo (antes la sombra latía en bucle, repintando cada cuadro)
+                            ...(isToday ? { boxShadow: "0 4px 18px rgba(244,63,94,0.45)" } : {}),
                           }}
-                          animate={isToday ? { boxShadow: ["0 4px 14px rgba(244,63,94,0.35)","0 4px 24px rgba(244,63,94,0.6)","0 4px 14px rgba(244,63,94,0.35)"] } : {}}
-                          transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
                         >
                           {/* Highlight top */}
                           <div className="absolute top-0 left-0 right-0 h-3 bg-white/25 rounded-t-2xl"></div>
                           <span className="text-[9px] font-black text-white/85 tracking-wider mt-1 leading-none">{monthAbbr}</span>
                           <motion.span
                             key={dayNum}
-                            initial={{ scale: 0.6, opacity: 0 }}
+                            initial={{ scale: 0.96, opacity: 0 }}
                             animate={{ scale: 1, opacity: 1 }}
-                            transition={{ delay: 0.5 + idx * 0.08, type: "spring", stiffness: 260 }}
+                            transition={{ delay: 0.15 + Math.min(idx, 6) * 0.04, duration: 0.2, ease: "easeOut" }}
                             className="text-3xl sm:text-4xl font-black text-white leading-none"
                             style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
                           >
                             {dayNum}
                           </motion.span>
-                        </motion.div>
+                        </div>
                       </motion.div>
 
                       {/* ── INFO CENTRAL ── */}
@@ -773,7 +759,7 @@ export default function Dashboard() {
                             <motion.span
                               initial={{ opacity: 0, x: -6 }}
                               animate={{ opacity: 1, x: 0 }}
-                              transition={{ delay: 0.6 + idx * 0.08 }}
+                              transition={{ delay: 0.2 + Math.min(idx, 6) * 0.04, duration: 0.2 }}
                               className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1 ${urgencyClass}`}
                             >
                               <UrgencyIcon size={10} strokeWidth={2.5} />
@@ -841,9 +827,9 @@ export default function Dashboard() {
                       {/* ── DERECHA: monto + progreso + status ── */}
                       <div className="hidden md:flex flex-col items-end gap-1.5 flex-shrink-0 min-w-[160px]">
                         <motion.span
-                          initial={{ opacity: 0, scale: 0.9 }}
+                          initial={{ opacity: 0, scale: 0.96 }}
                           animate={{ opacity: 1, scale: 1 }}
-                          transition={{ delay: 0.55 + idx * 0.08 }}
+                          transition={{ delay: 0.15 + Math.min(idx, 6) * 0.04, duration: 0.2 }}
                           className="text-xl font-black text-slate-800 leading-none"
                           style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
                         >
@@ -852,10 +838,12 @@ export default function Dashboard() {
                         {r.total_amount > 0 && (
                           <div className="flex items-center gap-2 w-full">
                             <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              {/* Relleno con scaleX (en la tarjeta gráfica) en vez de animar el ancho */}
                               <motion.div
-                                initial={{ width: 0 }}
-                                animate={{ width: `${paidPercent}%` }}
-                                transition={{ delay: 0.7 + idx * 0.08, duration: 0.9, ease: "easeOut" }}
+                                initial={{ scaleX: 0 }}
+                                animate={{ scaleX: 1 }}
+                                transition={{ delay: 0.2 + Math.min(idx, 6) * 0.04, duration: 0.25, ease: "easeOut" }}
+                                style={{ width: `${paidPercent}%`, transformOrigin: "0% 50%" }}
                                 className="h-full rounded-full theme-progress"
                               />
                             </div>
@@ -868,18 +856,14 @@ export default function Dashboard() {
                       </div>
 
                       {/* Flecha CTA hover */}
-                      <motion.div
-                        className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                        animate={{ x: [0, 4, 0] }}
-                        transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
-                      >
+                      <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                         <div
                           className="w-8 h-8 rounded-full flex items-center justify-center shadow-md"
                           style={{ background: cfg.fg }}
                         >
                           <ArrowRight size={14} className="text-white" strokeWidth={2.5} />
                         </div>
-                      </motion.div>
+                      </div>
                     </div>
 
                     {/* Mobile: monto + status abajo */}
@@ -905,32 +889,30 @@ export default function Dashboard() {
             className="relative border-t border-white/40 px-6 py-6 overflow-hidden"
             data-testid="charts-section"
           >
-            {/* Soft color accents */}
-            <motion.div
+            {/* Soft color accents (quietos) */}
+            <div
               className="absolute -right-20 -top-20 w-72 h-72 rounded-full pointer-events-none"
               style={{
                 background:
                   "radial-gradient(circle, rgba(236,72,153,0.14), transparent 70%)",
+                opacity: 0.85,
               }}
-              animate={{ scale: [1, 1.15, 1], opacity: [0.7, 1, 0.7] }}
-              transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
             />
-            <motion.div
+            <div
               className="absolute -left-16 -bottom-16 w-64 h-64 rounded-full pointer-events-none"
               style={{
                 background:
                   "radial-gradient(circle, rgba(139,92,246,0.12), transparent 70%)",
+                opacity: 0.75,
               }}
-              animate={{ scale: [1, 1.2, 1], opacity: [0.6, 0.9, 0.6] }}
-              transition={{ duration: 6, repeat: Infinity, ease: "easeInOut", delay: 1 }}
             />
 
             {/* Header */}
             <div className="relative z-10 flex flex-wrap items-center gap-4 mb-6">
               <motion.div
-                initial={{ scale: 0, rotate: -20 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: "spring", stiffness: 220, damping: 14, delay: 0.55 }}
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.2, ease: "easeOut", delay: 0.15 }}
                 className="relative w-11 h-11 rounded-2xl flex items-center justify-center"
                 style={{
                   background: "linear-gradient(135deg,#ec4899,#a855f7)",
@@ -947,11 +929,7 @@ export default function Dashboard() {
                   {language === "es" ? "Tipos de Evento" : "Event Types"}
                 </h2>
                 <p className="text-xs text-slate-500 font-semibold flex items-center gap-1.5 mt-0.5">
-                  <motion.span
-                    className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500"
-                    animate={{ opacity: [1, 0.3, 1], scale: [1, 1.3, 1] }}
-                    transition={{ duration: 1.6, repeat: Infinity }}
-                  />
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   {(() => {
                     const paid = activeForTypes.filter(isReservationPaid).length;
                     return `${paid} / ${activeForTypes.length} ${language === "es" ? "pagados" : "paid"}`;
@@ -969,7 +947,7 @@ export default function Dashboard() {
 
               {/* Segmented filter: Mes / Todos */}
               <div
-                className="flex items-center gap-1 p-1 rounded-full bg-white/70 border border-slate-200/70 backdrop-blur-sm shadow-sm"
+                className="flex items-center gap-1 p-1 rounded-full bg-white/70 border border-slate-200/70 shadow-sm"
                 data-testid="event-types-filter"
               >
                 {[

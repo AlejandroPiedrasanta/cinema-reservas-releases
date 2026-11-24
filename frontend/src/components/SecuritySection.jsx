@@ -249,7 +249,7 @@ export function SecuritySection() {
                   {es ? "Quitar la contraseña de la app…" : "Remove app password…"}
                 </button>
               ) : (
-                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+                <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}
                   className="flex items-center gap-2 bg-red-50/70 border border-red-200/60 rounded-2xl p-3">
                   <p className="text-[10px] text-red-500 font-semibold flex-1">
                     {es ? "Escribe tu contraseña actual arriba y confirma para quitarla" : "Type your current password above and confirm"}
@@ -304,7 +304,8 @@ export function SecuritySection() {
           <AnimatePresence>
             {advCfg.auto_lock_enabled && security.passwordEnabled && (
               <motion.div
-                initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                transition={{ duration: 0.2 }}
                 className="pl-12 space-y-2 overflow-hidden">
                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                   {es ? "Bloquear después de" : "Lock after"}

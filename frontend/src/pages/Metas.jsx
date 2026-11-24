@@ -20,6 +20,11 @@ const TYPES = [
   { key: "gastos",     label: "Gastos",           icon: Wallet,     grad: "from-amber-400 via-orange-500 to-rose-500",     ring: "ring-orange-400/60",  accent: "orange",  desc: "Pagos a socios y más" },
 ];
 
+// Orbe de color difuminado SIN filter: blur (máscara radial + algo más grande = mismo halo suave).
+// El blur de 40-64 px se recalculaba cada vez que se repintaba algo encima (contadores, anillo).
+const SOFT_ORB_MASK = "radial-gradient(closest-side, #000 30%, rgba(0,0,0,0.5) 70%, transparent 100%)";
+const SOFT_ORB = { WebkitMaskImage: SOFT_ORB_MASK, maskImage: SOFT_ORB_MASK, transform: "scale(1.4)" };
+
 const MOTIVATIONAL_MILESTONES = [
   { pct: 25,  msg: "¡Vas por buen camino! 🚀",         emoji: "🚀" },
   { pct: 50,  msg: "¡A mitad del sueño! 💪",           emoji: "💪" },
@@ -66,62 +71,36 @@ function StreakCard({ streak, formatCurrency }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ delay: 0.15, duration: 0.4 }}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.1, duration: 0.25, ease: "easeOut" }}
       className="relative overflow-hidden rounded-3xl p-5 shadow-lg"
       style={{
         background: badge
           ? `linear-gradient(135deg, rgba(255,255,255,0.92), rgba(255,255,255,0.7))`
           : "linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.6))",
-        backdropFilter: "blur(20px)",
         border: badge ? `1.5px solid ${badge.glow}` : "1px solid rgba(255,255,255,0.6)",
         boxShadow: badge ? `0 12px 40px ${badge.glow}, 0 4px 16px rgba(0,0,0,0.06)` : undefined,
       }}
       data-testid="streak-card"
     >
-      {/* Fondo animado si hay badge */}
+      {/* Fondo de color si hay badge (estático: antes latía sin parar) */}
       {badge && (
-        <motion.div
-          className="absolute inset-0 opacity-25 pointer-events-none"
-          animate={{ opacity: [0.15, 0.35, 0.15] }}
-          transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-        >
+        <div className="absolute inset-0 opacity-25 pointer-events-none">
           <div className={`w-full h-full bg-gradient-to-br ${badge.grad}`} />
-        </motion.div>
+        </div>
       )}
 
       <div className="relative flex items-center gap-4">
-        {/* Icono principal con llamas animadas */}
+        {/* Icono principal */}
         <div className="relative shrink-0">
-          <motion.div
-            animate={badge
-              ? { scale: [1, 1.12, 1], rotate: [0, -6, 6, 0] }
-              : { scale: [1, 1.04, 1] }}
-            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+          <div
             className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg ${
               badge ? `bg-gradient-to-br ${badge.grad}` : "bg-gradient-to-br from-slate-300 to-slate-400"
             }`}
           >
             <Flame size={28} className="text-white" strokeWidth={2.2} fill={badge ? "white" : "none"} />
-          </motion.div>
-          {/* Chispas orbitando */}
-          {badge && (
-            <>
-              {[0, 1, 2].map(i => (
-                <motion.div
-                  key={i}
-                  className="absolute top-1/2 left-1/2 w-1.5 h-1.5 rounded-full bg-amber-300 shadow-[0_0_8px_rgba(251,191,36,0.9)]"
-                  animate={{
-                    x: [Math.cos((i / 3) * Math.PI * 2) * 30, Math.cos(((i / 3) * Math.PI * 2) + Math.PI * 2) * 30],
-                    y: [Math.sin((i / 3) * Math.PI * 2) * 30, Math.sin(((i / 3) * Math.PI * 2) + Math.PI * 2) * 30],
-                    opacity: [0.4, 1, 0.4],
-                  }}
-                  transition={{ duration: 3 + i * 0.4, repeat: Infinity, ease: "linear" }}
-                />
-              ))}
-            </>
-          )}
+          </div>
         </div>
 
         {/* Texto principal */}
@@ -130,9 +109,9 @@ function StreakCard({ streak, formatCurrency }) {
             <p className="text-xs font-black text-slate-500 uppercase tracking-widest">Racha consecutiva</p>
             {badge && (
               <motion.span
-                initial={{ scale: 0, rotate: -15 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: "spring", damping: 10, stiffness: 200 }}
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
                 className={`inline-flex items-center gap-1 bg-gradient-to-r ${badge.grad} text-white text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full shadow-md`}
               >
                 <span>{badge.emoji}</span>{badge.label}
@@ -142,9 +121,9 @@ function StreakCard({ streak, formatCurrency }) {
           <div className="flex items-baseline gap-2 flex-wrap">
             <motion.p
               key={current}
-              initial={{ scale: 0.6, opacity: 0 }}
+              initial={{ scale: 0.96, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              transition={{ type: "spring", damping: 12, stiffness: 200 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
               className="text-4xl font-black text-slate-900 tracking-tight leading-none"
               style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
               data-testid="streak-current"
@@ -157,14 +136,7 @@ function StreakCard({ streak, formatCurrency }) {
             {/* Llamas visuales */}
             <div className="flex items-center gap-0.5 ml-1">
               {[...Array(flames)].map((_, i) => (
-                <motion.span
-                  key={i}
-                  className="text-lg"
-                  animate={{ y: [0, -3, 0], scale: [1, 1.1, 1] }}
-                  transition={{ duration: 1 + i * 0.15, repeat: Infinity, delay: i * 0.1 }}
-                >
-                  🔥
-                </motion.span>
+                <span key={i} className="text-lg">🔥</span>
               ))}
             </div>
           </div>
@@ -178,9 +150,9 @@ function StreakCard({ streak, formatCurrency }) {
         {/* Award/trofeo si racha ≥ 3 */}
         {badge && (
           <motion.div
-            initial={{ scale: 0, rotate: -180 }}
-            animate={{ scale: 1, rotate: 0 }}
-            transition={{ type: "spring", damping: 10, delay: 0.2 }}
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.2, ease: "easeOut", delay: 0.1 }}
             className="hidden sm:flex shrink-0 w-14 h-14 rounded-2xl items-center justify-center shadow-lg"
             style={{ background: `linear-gradient(135deg, ${badge.glow.replace("0.55","0.9").replace("0.6","0.9")}, rgba(255,255,255,0.4))` }}
           >
@@ -192,6 +164,11 @@ function StreakCard({ streak, formatCurrency }) {
   );
 }
 
+// Sin animaciones (ajuste de la app o "reducir movimiento" del sistema): el número salta al valor final
+const motionOff = () =>
+  document.documentElement.dataset.animations === "false" ||
+  (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+
 function useCountUp(target, duration = 900) {
   const [val, setVal] = useState(target || 0);
   const raf = useRef();
@@ -200,6 +177,7 @@ function useCountUp(target, duration = 900) {
     const start = performance.now();
     const from = prev.current;
     const to = target || 0;
+    if (motionOff() || from === to) { prev.current = to; setVal(to); return undefined; }
     const step = (t) => {
       const p = Math.min(1, (t - start) / duration);
       const eased = 1 - Math.pow(1 - p, 3);
@@ -212,6 +190,13 @@ function useCountUp(target, duration = 900) {
     return () => cancelAnimationFrame(raf.current);
   }, [target, duration]);
   return val;
+}
+
+// Contador animado aislado: solo se vuelve a pintar este texto en cada frame (antes se
+// re-renderizaba la página de Metas entera ~60 veces por segundo mientras contaba).
+function CountUp({ value, duration, render }) {
+  const v = useCountUp(value, duration);
+  return render(v);
 }
 
 function GoalReachedModal({ open, onClose, type, monthLabel, amount, formatCurrency }) {
@@ -231,49 +216,45 @@ function GoalReachedModal({ open, onClose, type, monthLabel, amount, formatCurre
             onClick={onClose}
           />
           <motion.div
-            initial={{ scale: 0.4, rotate: -12, opacity: 0 }}
-            animate={{ scale: 1, rotate: 0, opacity: 1 }}
-            exit={{ scale: 0.6, opacity: 0 }}
-            transition={{ type: "spring", damping: 12, stiffness: 160 }}
+            initial={{ scale: 0.96, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.96, opacity: 0, transition: { duration: 0.15 } }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
             className="relative max-w-md w-full rounded-3xl overflow-hidden shadow-2xl"
             style={{
               background: "linear-gradient(135deg, #064e3b 0%, #065f46 40%, #0f766e 100%)",
               border: "2px solid rgba(52,211,153,0.7)",
             }}
           >
-            {/* Rays background */}
-            <motion.div
+            {/* Rays background (estático) */}
+            <div
               className="absolute inset-0 pointer-events-none opacity-40"
               style={{
                 background: "conic-gradient(from 0deg at 50% 50%, transparent 0deg, rgba(251,191,36,0.6) 20deg, transparent 40deg, transparent 80deg, rgba(52,211,153,0.5) 100deg, transparent 120deg, transparent 160deg, rgba(251,191,36,0.6) 180deg, transparent 200deg, transparent 240deg, rgba(52,211,153,0.5) 260deg, transparent 280deg, transparent 320deg, rgba(251,191,36,0.6) 340deg, transparent 360deg)"
               }}
-              animate={{ rotate: 360 }}
-              transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
             />
             <div className="relative p-8 text-center">
-              <motion.div
-                animate={{ scale: [1, 1.15, 1], rotate: [0, -5, 5, 0] }}
-                transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+              <div
                 className="w-24 h-24 mx-auto mb-4 rounded-full flex items-center justify-center shadow-2xl"
                 style={{ background: "linear-gradient(135deg, #fbbf24, #f59e0b, #ea580c)" }}
               >
                 <Trophy size={54} className="text-white" strokeWidth={2} />
-              </motion.div>
+              </div>
               <motion.h2
-                initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
+                initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, duration: 0.2 }}
                 className="text-4xl font-black text-white tracking-tight mb-2"
                 style={{ fontFamily: "Cabinet Grotesk, sans-serif", textShadow: "0 4px 20px rgba(251,191,36,0.5)" }}
               >
                 ¡LO LOGRASTE!
               </motion.h2>
               <motion.p
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.12, duration: 0.2 }}
                 className="text-emerald-100/90 text-sm font-bold uppercase tracking-widest mb-4"
               >
                 {/^año /.test(monthLabel || "") ? `Meta del ${monthLabel}` : /^\d+ meses$/.test(monthLabel || "") ? `Metas de ${monthLabel}` : `Meta de ${monthLabel}`} · {typeCfg.label}
               </motion.p>
               <motion.div
-                initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.4, type: "spring", damping: 10 }}
+                initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.16, duration: 0.2, ease: "easeOut" }}
                 className="inline-flex items-center gap-2 bg-emerald-950/50 border border-emerald-300/40 rounded-2xl px-5 py-3 mb-6"
               >
                 <Sparkles size={16} className="text-amber-300" />
@@ -283,7 +264,7 @@ function GoalReachedModal({ open, onClose, type, monthLabel, amount, formatCurre
                 <Sparkles size={16} className="text-amber-300" />
               </motion.div>
               <motion.p
-                initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
+                initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2, duration: 0.2 }}
                 className="text-emerald-100/80 text-sm font-medium mb-6 max-w-xs mx-auto"
               >
                 Cada meta alcanzada te acerca a algo más grande. ¡Sigue así!
@@ -315,14 +296,14 @@ function MilestoneToast({ milestone, onDone }) {
     <AnimatePresence>
       {milestone && (
         <motion.div
-          initial={{ y: -80, opacity: 0, scale: 0.7 }}
-          animate={{ y: 0, opacity: 1, scale: 1 }}
-          exit={{ y: -60, opacity: 0 }}
-          transition={{ type: "spring", damping: 14, stiffness: 200 }}
+          initial={{ y: -12, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: -8, opacity: 0, transition: { duration: 0.15 } }}
+          transition={{ duration: 0.22, ease: "easeOut" }}
           className="fixed top-6 left-1/2 -translate-x-1/2 z-[9998] pointer-events-none"
           data-testid="milestone-toast"
         >
-          <div className="flex items-center gap-3 px-5 py-3 rounded-full shadow-2xl border-2 border-white/40 backdrop-blur-xl"
+          <div className="flex items-center gap-3 px-5 py-3 rounded-full shadow-2xl border-2 border-white/40"
                style={{ background: "linear-gradient(135deg, rgba(139,92,246,0.95), rgba(236,72,153,0.95))" }}>
             <span className="text-2xl">{milestone.emoji}</span>
             <span className="text-white font-black text-sm tracking-wide">{milestone.msg}</span>
@@ -341,7 +322,6 @@ function MonthCard({ month, data, type, index, formatCurrency, onSave, celebrate
   const typeCfg = TYPES.find(t => t.key === type) || TYPES[0];
   const pct = Math.min(100, data.percent || 0);
   const reached = data.reached;
-  const animPct = useCountUp(pct, 700);
   const isGastos = mode === "gastos";
 
   useEffect(() => { setDraft(String(data.goal || "")); }, [data.goal]);
@@ -383,24 +363,13 @@ function MonthCard({ month, data, type, index, formatCurrency, onSave, celebrate
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 22, scale: 0.94 }}
-      animate={{ opacity: isPast ? 0.5 : 1, y: 0, scale: 1 }}
-      transition={{ delay: index * 0.04, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-      whileHover={{ y: -4, scale: 1.015, opacity: 1 }}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: isPast ? 0.5 : 1, y: 0 }}
+      transition={{ delay: Math.min(index, 6) * 0.04, duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+      whileHover={{ y: -4, scale: 1.015, opacity: 1, transition: { duration: 0.2 } }}
       data-testid={`meta-month-${month}`}
       className={`relative glass rounded-3xl p-4 overflow-hidden transition-all ${reached ? `ring-2 ${typeCfg.ring} shadow-lg` : ""} ${isCurrent ? "ring-2 ring-indigo-300/70 shadow-md" : ""}`}
     >
-      {/* Reached shine (no aplica en gastos) */}
-      {!isGastos && reached && (
-        <motion.div
-          className="absolute inset-0 pointer-events-none opacity-40"
-          animate={{ background: [
-            "linear-gradient(120deg, transparent 0%, rgba(251,191,36,0.4) 50%, transparent 100%)",
-            "linear-gradient(120deg, transparent 100%, rgba(251,191,36,0.4) 150%, transparent 200%)",
-          ]}}
-          transition={{ duration: 2.5, repeat: Infinity, ease: "linear" }}
-        />
-      )}
       <div className="relative flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <div className={`w-9 h-9 rounded-2xl bg-gradient-to-br ${typeCfg.grad} flex items-center justify-center shadow-sm`}>
@@ -418,15 +387,15 @@ function MonthCard({ month, data, type, index, formatCurrency, onSave, celebrate
                 {isPast ? "mes cerrado" : isCurrent ? "en curso" : "próximo"}
               </p>
             ) : (
-              <p className="text-[10px] text-slate-400 font-medium whitespace-nowrap tabular-nums">{Math.round(animPct)}% completado</p>
+              <p className="text-[10px] text-slate-400 font-medium whitespace-nowrap tabular-nums"><CountUp value={pct} duration={700} render={(v) => Math.round(v)} />% completado</p>
             )}
           </div>
         </div>
         {!isGastos && reached && (
           <motion.div
-            initial={{ scale: 0, rotate: -180 }}
-            animate={{ scale: 1, rotate: 0 }}
-            transition={{ type: "spring", damping: 10 }}
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
             className="flex items-center gap-1 bg-emerald-100 border border-emerald-300/70 rounded-full px-2 py-0.5"
           >
             <Trophy size={10} className="text-emerald-700" />
@@ -448,31 +417,18 @@ function MonthCard({ month, data, type, index, formatCurrency, onSave, celebrate
       {/* Progress bar */}
       {isGastos ? (
         <div className="relative h-2.5 bg-slate-200/60 rounded-full overflow-hidden mb-3">
-          <motion.div
+          {/* ancho fijo (antes se animaba el width = recalcular el layout en cada frame) */}
+          <div
             className="absolute inset-y-0 left-0 rounded-full"
-            style={{ background: gastosBar }}
-            initial={{ width: 0 }}
-            animate={{ width: data.actual > 0 ? "100%" : "0%" }}
-            transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1], delay: index * 0.04 + 0.15 }}
+            style={{ background: gastosBar, width: data.actual > 0 ? "100%" : "0%" }}
           />
         </div>
       ) : (
         <div className="relative h-2.5 bg-slate-200/60 rounded-full overflow-hidden mb-3">
-          <motion.div
+          <div
             className="absolute inset-y-0 left-0 rounded-full"
-            style={{ background: barColor, boxShadow: reached ? "0 0 12px rgba(52,211,153,0.6)" : "none" }}
-            initial={{ width: 0 }}
-            animate={{ width: `${Math.min(100, pct)}%` }}
-            transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1], delay: index * 0.04 + 0.15 }}
+            style={{ background: barColor, boxShadow: reached ? "0 0 12px rgba(52,211,153,0.6)" : "none", width: `${Math.min(100, pct)}%` }}
           />
-          {reached && (
-            <motion.div
-              className="absolute inset-y-0 w-8 rounded-full pointer-events-none"
-              style={{ background: "linear-gradient(90deg,transparent,rgba(255,255,255,0.9),transparent)" }}
-              animate={{ x: ["-100%", "1200%"] }}
-              transition={{ duration: 1.8, repeat: Infinity, ease: "linear" }}
-            />
-          )}
         </div>
       )}
 
@@ -553,7 +509,7 @@ const TRANSITIONS = {
       animate: { opacity: 1 },
       exit:    { opacity: 0 },
     },
-    duration: 0.6,
+    duration: 0.35,
   },
   slide: {
     label: "Deslizar",
@@ -563,7 +519,7 @@ const TRANSITIONS = {
       animate: { opacity: 1, x: 0 },
       exit:    { opacity: 0, x: -60 },
     },
-    duration: 0.55,
+    duration: 0.35,
   },
   zoom: {
     label: "Zoom",
@@ -573,17 +529,17 @@ const TRANSITIONS = {
       animate: { opacity: 1, scale: 1 },
       exit:    { opacity: 0, scale: 1.12 },
     },
-    duration: 0.55,
+    duration: 0.35,
   },
   blur: {
     label: "Desenfoque",
     hint: "Enfoca de borroso a nítido",
     variants: {
-      initial: { opacity: 0, filter: "blur(16px)" },
+      initial: { opacity: 0, filter: "blur(8px)" },
       animate: { opacity: 1, filter: "blur(0px)" },
-      exit:    { opacity: 0, filter: "blur(16px)" },
+      exit:    { opacity: 0, filter: "blur(8px)" },
     },
-    duration: 0.6,
+    duration: 0.35,
   },
   flip: {
     label: "Flip 3D",
@@ -593,7 +549,7 @@ const TRANSITIONS = {
       animate: { opacity: 1, rotateY: 0 },
       exit:    { opacity: 0, rotateY: -90 },
     },
-    duration: 0.65,
+    duration: 0.35,
   },
   rise: {
     label: "Elevar",
@@ -603,7 +559,7 @@ const TRANSITIONS = {
       animate: { opacity: 1, y: 0 },
       exit:    { opacity: 0, y: -36 },
     },
-    duration: 0.55,
+    duration: 0.35,
   },
 };
 
@@ -654,7 +610,8 @@ function GoalDreamImage({ year, type }) {
   useEffect(() => {
     if (state.images.length < 2) return;
     const ms = Math.max(1, state.intervalSec) * 1000;
-    const t = setInterval(() => setIdx(i => (i + 1) % state.images.length), ms);
+    // con la ventana oculta/minimizada no se rota (evita re-renders en segundo plano)
+    const t = setInterval(() => { if (!document.hidden) setIdx(i => (i + 1) % state.images.length); }, ms);
     return () => clearInterval(t);
   }, [state.images.length, state.intervalSec]);
 
@@ -673,9 +630,7 @@ function GoalDreamImage({ year, type }) {
           {current ? (
             (() => {
               const tr = TRANSITIONS[state.transition] || TRANSITIONS.fade;
-              const animateExtra = state.transition === "fade"
-                ? { opacity: current.opacity ?? 1, y: [0, -4, 0] }
-                : { ...tr.variants.animate, opacity: current.opacity ?? 1 };
+              const animateExtra = { ...tr.variants.animate, opacity: current.opacity ?? 1 };
               return (
                 <motion.div
                   key={current.id + "-" + idx}
@@ -691,9 +646,7 @@ function GoalDreamImage({ year, type }) {
                   transition={{
                     opacity: { duration: tr.duration, ease: "easeOut" },
                     x:       { duration: tr.duration, ease: [0.22, 0.9, 0.36, 1] },
-                    y:       state.transition === "fade"
-                              ? { duration: 4, repeat: Infinity, ease: "easeInOut" }
-                              : { duration: tr.duration, ease: [0.22, 0.9, 0.36, 1] },
+                    y:       { duration: tr.duration, ease: [0.22, 0.9, 0.36, 1] },
                     scale:   { duration: tr.duration, ease: [0.22, 0.9, 0.36, 1] },
                     filter:  { duration: tr.duration, ease: "easeOut" },
                     rotateY: { duration: tr.duration, ease: [0.22, 0.9, 0.36, 1] },
@@ -723,12 +676,9 @@ function GoalDreamImage({ year, type }) {
               className="absolute inset-0 flex flex-col items-center justify-center text-slate-300 group-hover:text-slate-400 transition-colors"
               data-testid="goal-image-empty"
             >
-              <motion.div
-                animate={{ y: [0, -4, 0], rotate: [0, 3, -3, 0] }}
-                transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-              >
+              <div>
                 <ImagePlus size={32} strokeWidth={1.5} />
-              </motion.div>
+              </div>
               <p className="text-[10px] font-bold uppercase tracking-widest mt-2">Imagen de tu meta</p>
             </motion.div>
           )}
@@ -956,7 +906,7 @@ function GoalImageModal({ open, onClose, state, onChange, activeIdx, setActiveId
           </div>
           <button
             onClick={onClose}
-            className="w-9 h-9 rounded-full bg-white/60 backdrop-blur-md border border-slate-200/70 hover:bg-white hover:border-slate-300 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-all shadow-sm"
+            className="w-9 h-9 rounded-full bg-white/60 border border-slate-200/70 hover:bg-white hover:border-slate-300 flex items-center justify-center text-slate-500 hover:text-slate-800 transition-all shadow-sm"
             data-testid="goal-modal-close"
             aria-label="Cerrar"
           >
@@ -1014,12 +964,12 @@ function GoalImageModal({ open, onClose, state, onChange, activeIdx, setActiveId
                     <span className="absolute -top-px -right-px w-5 h-5 border-t-2 border-r-2 border-indigo-400 rounded-tr-lg" />
                     <span className="absolute -bottom-px -left-px w-5 h-5 border-b-2 border-l-2 border-indigo-400 rounded-bl-lg" />
                     <span className="absolute -bottom-px -right-px w-5 h-5 border-b-2 border-r-2 border-indigo-400 rounded-br-lg" />
-                    <span className="absolute -bottom-7 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-widest text-white/95 whitespace-nowrap px-2.5 py-1 rounded-full bg-slate-900/60 backdrop-blur">
+                    <span className="absolute -bottom-7 left-1/2 -translate-x-1/2 text-[10px] font-bold uppercase tracking-widest text-white/95 whitespace-nowrap px-2.5 py-1 rounded-full bg-slate-900/70">
                       Visible en la meta
                     </span>
                   </div>
 
-                  <span className="absolute top-3 left-1/2 -translate-x-1/2 text-[10px] font-semibold text-white bg-slate-900/70 backdrop-blur px-3 py-1.5 rounded-full pointer-events-none z-10 shadow-lg">
+                  <span className="absolute top-3 left-1/2 -translate-x-1/2 text-[10px] font-semibold text-white bg-slate-900/80 px-3 py-1.5 rounded-full pointer-events-none z-10 shadow-lg">
                     ✋ Arrastra para mover · así se verá en tu meta
                   </span>
                 </>
@@ -1150,8 +1100,6 @@ function GoalImageModal({ open, onClose, state, onChange, activeIdx, setActiveId
                 className="text-[11px] font-bold text-white px-3 py-1.5 rounded-full transition-all hover:-translate-y-0.5 active:translate-y-0 flex items-center gap-1.5"
                 style={{
                   background: "linear-gradient(135deg, rgba(99,102,241,0.95), rgba(168,85,247,0.95))",
-                  backdropFilter: "blur(12px) saturate(160%)",
-                  WebkitBackdropFilter: "blur(12px) saturate(160%)",
                   border: "1px solid rgba(255,255,255,0.35)",
                   boxShadow: "0 6px 18px -6px rgba(99,102,241,0.55), inset 0 1px 0 rgba(255,255,255,0.35)",
                 }}
@@ -1198,8 +1146,6 @@ function GoalImageModal({ open, onClose, state, onChange, activeIdx, setActiveId
               className="text-sm font-semibold text-slate-600 hover:text-slate-900 px-4 py-2 rounded-full transition-all"
               style={{
                 background: "linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0.4))",
-                backdropFilter: "blur(12px) saturate(160%)",
-                WebkitBackdropFilter: "blur(12px) saturate(160%)",
                 border: "1px solid rgba(226,232,240,0.9)",
                 boxShadow: "0 4px 14px -6px rgba(15,23,42,0.12), inset 0 1px 0 rgba(255,255,255,0.7)",
               }}
@@ -1210,8 +1156,6 @@ function GoalImageModal({ open, onClose, state, onChange, activeIdx, setActiveId
               className="text-sm font-bold text-white px-5 py-2.5 rounded-full transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex items-center gap-2 hover:-translate-y-0.5 active:translate-y-0"
               style={{
                 background: "linear-gradient(135deg, rgba(99,102,241,0.95), rgba(168,85,247,0.95))",
-                backdropFilter: "blur(14px) saturate(180%)",
-                WebkitBackdropFilter: "blur(14px) saturate(180%)",
                 border: "1px solid rgba(255,255,255,0.35)",
                 boxShadow: "0 10px 28px -8px rgba(99,102,241,0.6), inset 0 1px 0 rgba(255,255,255,0.35)",
               }}
@@ -1248,8 +1192,6 @@ function GlassSlider({ value, min, max, step, onValueChange, testId }) {
           background: "linear-gradient(135deg, rgba(226,232,240,0.85), rgba(241,245,249,0.55))",
           border: "1px solid rgba(226,232,240,0.9)",
           boxShadow: "inset 0 1px 2px rgba(15,23,42,0.06)",
-          backdropFilter: "blur(6px)",
-          WebkitBackdropFilter: "blur(6px)",
         }}
       >
         <SliderPrimitive.Range
@@ -1264,8 +1206,6 @@ function GlassSlider({ value, min, max, step, onValueChange, testId }) {
         className="block h-5 w-5 rounded-full focus:outline-none transition-transform hover:scale-110 active:scale-95"
         style={{
           background: "linear-gradient(135deg, rgba(255,255,255,0.98), rgba(255,255,255,0.72))",
-          backdropFilter: "blur(10px)",
-          WebkitBackdropFilter: "blur(10px)",
           border: "1.5px solid rgba(99,102,241,0.85)",
           boxShadow: "0 4px 12px rgba(99,102,241,0.4), inset 0 1px 0 rgba(255,255,255,0.9)",
         }}
@@ -1291,8 +1231,6 @@ function TransitionChip({ active, onClick, label, hint, testId }) {
               border: "1px solid rgba(255,255,255,0.35)",
               boxShadow:
                 "0 10px 26px -8px rgba(99,102,241,0.55), inset 0 1px 0 rgba(255,255,255,0.35)",
-              backdropFilter: "blur(14px) saturate(160%)",
-              WebkitBackdropFilter: "blur(14px) saturate(160%)",
             }
           : {
               background:
@@ -1300,8 +1238,6 @@ function TransitionChip({ active, onClick, label, hint, testId }) {
               border: "1px solid rgba(226,232,240,0.9)",
               boxShadow:
                 "0 4px 14px -6px rgba(15,23,42,0.12), inset 0 1px 0 rgba(255,255,255,0.7)",
-              backdropFilter: "blur(14px) saturate(160%)",
-              WebkitBackdropFilter: "blur(14px) saturate(160%)",
             }
       }
     >
@@ -1381,10 +1317,7 @@ function PositionField({ label, value, onChange, testId }) {
 
 // Glass toggle button para opciones on/off (glassmorphism)
 function ToggleChip({ active, onClick, children, testId, accent }) {
-  const baseStyle = {
-    backdropFilter: "blur(14px) saturate(160%)",
-    WebkitBackdropFilter: "blur(14px) saturate(160%)",
-  };
+  const baseStyle = {}; // sin desenfoque de fondo: lo de detrás es liso, no se notaba y costaba en cada scroll
   const activeStyle = accent
     ? {
         ...baseStyle,
@@ -1498,8 +1431,9 @@ export default function Metas() {
 
   const typeCfg = TYPES.find(t => t.key === type) || TYPES[0];
   const annualPct = Math.min(100, data?.annual_percent || 0);
-  const animAnnualPct = useCountUp(annualPct, 1100);
-  const animAnnualVal = useCountUp(data?.annual_actual || 0, 1100);
+  // Los contadores animados (total anual, % y anillo) van en <CountUp>: así solo se repinta
+  // ese texto en cada frame y no toda la página.
+  const annualActual = data?.annual_actual || 0;
 
   // Track annual milestones
   useEffect(() => {
@@ -1635,10 +1569,10 @@ export default function Metas() {
       {/* Type switcher */}
       <motion.div
         initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 }}
+        transition={{ delay: 0.05, duration: 0.25 }}
         className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6"
       >
-        {TYPES.map((t, i) => {
+        {TYPES.map((t) => {
           const Icon = t.icon;
           const isActive = type === t.key;
           return (
@@ -1647,34 +1581,30 @@ export default function Metas() {
               onClick={() => setType(t.key)}
               data-testid={`type-btn-${t.key}`}
               whileHover={{ y: -3 }} whileTap={{ scale: 0.97 }}
-              transition={{ delay: i * 0.05 }}
+              transition={{ duration: 0.2 }}
               className={`relative overflow-hidden glass rounded-3xl p-4 text-left transition-all ${isActive ? `ring-2 ${t.ring} shadow-lg` : "opacity-70 hover:opacity-100"}`}
             >
               {isActive && (
-                <motion.div
+                <div
                   className="absolute inset-0 opacity-15 pointer-events-none"
                   style={{ background: `linear-gradient(135deg, var(--tw-gradient-stops))` }}
-                  animate={{ backgroundPosition: ["0% 0%", "100% 100%"] }}
-                  transition={{ duration: 4, repeat: Infinity, repeatType: "reverse" }}
                 >
                   <div className={`absolute inset-0 bg-gradient-to-br ${t.grad} opacity-50`} />
-                </motion.div>
+                </div>
               )}
               <div className="relative flex items-center gap-3">
-                <motion.div
-                  animate={isActive ? { scale: [1, 1.1, 1], rotate: [0, -5, 5, 0] } : { scale: 1 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                <div
                   className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${t.grad} flex items-center justify-center shadow-md`}
                 >
                   <Icon size={18} className="text-white" strokeWidth={2} />
-                </motion.div>
+                </div>
                 <div className="flex-1">
                   <p className="text-sm font-black text-slate-900">{t.label}</p>
                   <p className="text-[11px] text-slate-500 font-medium">{t.desc}</p>
                 </div>
                 {isActive && (
                   <motion.div
-                    initial={{ scale: 0 }} animate={{ scale: 1 }}
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}
                     className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.6)]"
                   />
                 )}
@@ -1688,22 +1618,17 @@ export default function Metas() {
       {isGastos ? (
         <motion.div
           initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
+          transition={{ delay: 0.1, duration: 0.25 }}
           className="relative overflow-hidden rounded-3xl p-6 mb-6 shadow-xl"
           style={{
             background: "linear-gradient(135deg, rgba(255,255,255,0.9), rgba(255,255,255,0.6))",
-            backdropFilter: "blur(20px)",
             border: "1px solid rgba(255,255,255,0.6)",
           }}
           data-testid="annual-gastos-card"
         >
-          <motion.div
-            className="absolute -top-20 -right-20 w-72 h-72 rounded-full opacity-20 pointer-events-none"
-            animate={{ scale: [1, 1.2, 1], rotate: [0, 45, 0] }}
-            transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
-          >
-            <div className={`w-full h-full rounded-full bg-gradient-to-br ${typeCfg.grad} blur-2xl`} />
-          </motion.div>
+          <div className="absolute -top-20 -right-20 w-72 h-72 rounded-full opacity-20 pointer-events-none">
+            <div className={`w-full h-full rounded-full bg-gradient-to-br ${typeCfg.grad}`} style={SOFT_ORB} />
+          </div>
           <div className="relative flex items-center gap-4">
             <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${typeCfg.grad} flex items-center justify-center shadow-lg shrink-0`}>
               <Wallet size={24} className="text-white" strokeWidth={2} />
@@ -1711,7 +1636,7 @@ export default function Metas() {
             <div className="flex-1 min-w-0">
               <p className="text-xs font-black text-slate-500 uppercase tracking-widest mb-1">Gastos totales · {year}</p>
               <p className="text-5xl font-black text-slate-900 tracking-tight leading-none" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }} data-testid="annual-actual">
-                {formatCurrency(animAnnualVal)}
+                <CountUp value={annualActual} duration={1100} render={formatCurrency} />
               </p>
               <p className="text-xs text-slate-500 font-medium mt-2">
                 En este apartado solo se registra el proceso mensual. Los gastos no requieren meta.
@@ -1722,35 +1647,27 @@ export default function Metas() {
       ) : (
       <motion.div
         initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2 }}
+        transition={{ delay: 0.1, duration: 0.25 }}
         className="relative overflow-visible rounded-[28px] p-6 sm:p-7 mb-6 shadow-2xl"
         style={{
           background: `
             radial-gradient(circle at 15% 15%, rgba(255,255,255,0.95), rgba(255,255,255,0.7) 40%, rgba(255,255,255,0.55) 100%)
           `,
-          backdropFilter: "blur(24px)",
           border: "1px solid rgba(255,255,255,0.7)",
         }}
         data-testid="annual-goal-card"
       >
         {/* Capas decorativas — recortadas al card para que solo la imagen pueda sobreponerse */}
         <div className="absolute inset-0 overflow-hidden rounded-[28px] pointer-events-none">
-        {/* Capa decorativa 1: gran orbe gradient del tipo */}
-        <motion.div
-          className="absolute -top-24 -right-24 w-80 h-80 rounded-full opacity-25 pointer-events-none"
-          animate={{ scale: [1, 1.2, 1], rotate: [0, 45, 0] }}
-          transition={{ duration: 12, repeat: Infinity, ease: "easeInOut" }}
-        >
-          <div className={`w-full h-full rounded-full bg-gradient-to-br ${typeCfg.grad} blur-3xl`} />
-        </motion.div>
+        {/* Capa decorativa 1: gran orbe gradient del tipo (quieto; suavizado con máscara radial
+            en vez de filter: blur, que obligaba a recalcular el desenfoque al repintar) */}
+        <div className="absolute -top-24 -right-24 w-80 h-80 rounded-full opacity-25 pointer-events-none">
+          <div className={`w-full h-full rounded-full bg-gradient-to-br ${typeCfg.grad}`} style={SOFT_ORB} />
+        </div>
         {/* Capa decorativa 2: orbe secundario */}
-        <motion.div
-          className="absolute -bottom-20 -left-16 w-64 h-64 rounded-full opacity-20 pointer-events-none"
-          animate={{ scale: [1.1, 1, 1.1], rotate: [0, -30, 0] }}
-          transition={{ duration: 14, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-        >
-          <div className={`w-full h-full rounded-full bg-gradient-to-br ${typeCfg.grad} blur-3xl`} />
-        </motion.div>
+        <div className="absolute -bottom-20 -left-16 w-64 h-64 rounded-full opacity-20 pointer-events-none">
+          <div className={`w-full h-full rounded-full bg-gradient-to-br ${typeCfg.grad}`} style={SOFT_ORB} />
+        </div>
         {/* Grid sutil */}
         <div
           className="absolute inset-0 opacity-[0.04] pointer-events-none"
@@ -1764,9 +1681,9 @@ export default function Metas() {
         <div className="relative flex flex-col lg:flex-row items-stretch lg:items-center gap-6 lg:gap-8">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2">
-              <motion.div animate={{ rotate: [0, 20, -20, 0] }} transition={{ duration: 4, repeat: Infinity }}>
+              <div>
                 <Flame size={16} className="text-orange-500" />
-              </motion.div>
+              </div>
               <p className="text-xs font-black text-slate-500 uppercase tracking-widest">Meta Anual · {year} · {typeCfg.label}</p>
             </div>
             <div className="flex items-baseline gap-3 flex-wrap">
@@ -1774,7 +1691,7 @@ export default function Metas() {
                   lo de al lado no salte de línea mientras anima */}
               <p className="text-5xl font-black text-slate-900 tracking-tight leading-none tabular-nums inline-grid" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }} data-testid="annual-actual">
                 <span className="invisible col-start-1 row-start-1" aria-hidden="true">{formatCurrency(data?.annual_actual || 0)}</span>
-                <span className="col-start-1 row-start-1">{formatCurrency(animAnnualVal)}</span>
+                <span className="col-start-1 row-start-1"><CountUp value={annualActual} duration={1100} render={formatCurrency} /></span>
               </p>
               <div className="flex items-center gap-1">
                 <span className="text-slate-400 text-sm font-bold">/</span>
@@ -1845,7 +1762,6 @@ export default function Metas() {
                       style={{
                         background: "linear-gradient(135deg, rgba(15,23,42,0.96), rgba(30,41,59,0.96))",
                         border: "1px solid rgba(148,163,184,0.35)",
-                        backdropFilter: "blur(12px)",
                       }}
                     >
                       {/* Flechita apuntando al chip */}
@@ -1897,14 +1813,16 @@ export default function Metas() {
           <div className="relative w-40 h-40 flex-shrink-0 mx-auto lg:mx-0">
             <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
               <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(148,163,184,0.2)" strokeWidth="8" />
-              <motion.circle
-                cx="50" cy="50" r="42" fill="none"
-                stroke="url(#gradMeta)" strokeWidth="8" strokeLinecap="round"
-                strokeDasharray={`${2 * Math.PI * 42}`}
-                initial={{ strokeDashoffset: 2 * Math.PI * 42 }}
-                animate={{ strokeDashoffset: 2 * Math.PI * 42 * (1 - Math.min(1, animAnnualPct / 100)) }}
-                transition={{ duration: 1.5, ease: [0.22, 1, 0.36, 1] }}
-              />
+              {/* el anillo avanza con el mismo contador que el % (antes framer reiniciaba una
+                  animación de 1.5 s en cada frame del contador) */}
+              <CountUp value={annualPct} duration={1100} render={(v) => (
+                <circle
+                  cx="50" cy="50" r="42" fill="none"
+                  stroke="url(#gradMeta)" strokeWidth="8" strokeLinecap="round"
+                  strokeDasharray={`${2 * Math.PI * 42}`}
+                  strokeDashoffset={2 * Math.PI * 42 * (1 - Math.min(1, v / 100))}
+                />
+              )} />
               <defs>
                 <linearGradient id="gradMeta" x1="0" y1="0" x2="1" y2="1">
                   <stop offset="0%" stopColor={typeCfg.key === "ventas" ? "#10b981" : typeCfg.key === "ganancias" ? "#8b5cf6" : "#f59e0b"} />
@@ -1914,18 +1832,16 @@ export default function Metas() {
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <p className="text-3xl font-black text-slate-900 tracking-tight leading-none" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }} data-testid="annual-percent">
-                {Math.round(animAnnualPct)}%
+                <CountUp value={annualPct} duration={1100} render={(v) => Math.round(v)} />%
               </p>
               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider mt-1">del sueño</p>
             </div>
             {data?.annual_reached && (
-              <motion.div
-                animate={{ scale: [1, 1.3, 1], rotate: [0, 15, -15, 0] }}
-                transition={{ duration: 2, repeat: Infinity }}
+              <div
                 className="absolute -top-2 -right-2 w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg"
               >
                 <Star size={16} className="text-white fill-white" />
-              </motion.div>
+              </div>
             )}
           </div>
         </div>

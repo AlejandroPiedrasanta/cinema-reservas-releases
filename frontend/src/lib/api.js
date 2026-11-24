@@ -9,19 +9,47 @@ export const api = axios.create({ baseURL: BASE, timeout: 30000 });
 // ── Caché corta de lecturas (rapidez al cambiar de página) ────────────────────
 // Las listas principales (reservas, socios, metas…) se guardan 30 s en memoria:
 // al volver a una página se muestran al instante en vez de esperar al servidor.
-// Cualquier cambio (POST/PUT/PATCH/DELETE) borra la caché, así nunca se ve un dato
-// viejo después de guardar. Peticiones iguales al mismo tiempo se unen en una.
+// Un cambio (POST/PUT/PATCH/DELETE) borra SOLO las lecturas que afecta (antes cualquier
+// escritura —incluso un reporte de error o guardar la apariencia— vaciaba toda la caché
+// y obligaba a pedir todo otra vez). Así nunca se ve un dato viejo después de guardar.
+// Peticiones iguales al mismo tiempo se unen en una.
 const CACHE_TTL_MS = 30000;
 const CACHEABLE = /^\/(stats|reservations(\/[\w-]+)?|socios(\/[\w-]+)?|calendar|catalog|financials|metas(\/progress)?|settings|settings\/appearance|themes)(\?.*)?$/;
 const _cache = new Map();      // url -> { t, response }
 const _inflight = new Map();   // url -> Promise<response>
 export const clearApiCache = () => { _cache.clear(); _inflight.clear(); };
+
+// Qué lecturas en caché invalida cada escritura, según su ruta. null = ninguna (la escritura
+// no toca datos guardados en caché). Lo que no aparece aquí borra toda la caché (seguro).
+const DATA_KEYS = /^\/(stats|reservations|socios|calendar|financials|metas)\b/;
+const INVALIDATION_RULES = [
+  [/^\/(errors|notifications|reminders|security|license|github|updates|update-progress|push|oauth|whatsapp|telegram|ntfy|download)\b/, null],
+  [/^\/backup\/(create|cloud\/create)\b/, null],
+  [/^\/settings\/database\/(test|compare)\b/, null],
+  [/^\/(reservations|socios|metas)\b/, DATA_KEYS],
+  [/^\/catalog\b/, /^\/(catalog|stats|financials)\b/],
+  [/^\/settings\/appearance\b/, /^\/settings\/appearance\b/],
+  [/^\/themes\b/, /^\/(themes|settings\/appearance)\b/],
+  [/^\/settings(\?|$)/, /^\/(settings(\?|$)|stats|financials|metas|calendar|reservations)/],
+];
+const apiPath = (u) => String(u || "")
+  .replace(/^https?:\/\/[^/]+/, "")
+  .replace(/^\/api(?=\/|$)/, "");
+export const invalidateApiCache = (writeUrl) => {
+  const path = apiPath(writeUrl);
+  const rule = INVALIDATION_RULES.find(([re]) => re.test(path));
+  if (!rule) { clearApiCache(); return; }
+  const affected = rule[1];
+  if (!affected) return;
+  for (const k of [..._cache.keys()]) if (affected.test(k)) _cache.delete(k);
+  for (const k of [..._inflight.keys()]) if (affected.test(k)) _inflight.delete(k);
+};
 const _baseAdapter = axios.getAdapter(api.defaults.adapter);
 api.defaults.adapter = (config) => {
   const method = (config.method || "get").toLowerCase();
-  const url = (config.url || "").replace(/^https?:\/\/[^/]+\/api/, "");
+  const url = apiPath(config.url);
   if (method !== "get") {
-    return _baseAdapter(config).then((res) => { clearApiCache(); return res; });
+    return _baseAdapter(config).then((res) => { invalidateApiCache(url); return res; });
   }
   const key = url + (config.params ? "?" + new URLSearchParams(config.params).toString() : "");
   if (!CACHEABLE.test(url) || config.noCache) return _baseAdapter(config);
@@ -38,14 +66,18 @@ api.defaults.adapter = (config) => {
   return p;
 };
 // Los cambios hechos con fetch() directo (restaurar, importar, borrar todo…) también
-// invalidan la caché.
+// invalidan la caché (solo la parte afectada; lo desconocido, toda).
 if (typeof window !== "undefined" && window.fetch && !window.__cpFetchPatched) {
   window.__cpFetchPatched = true;
   const _fetch = window.fetch.bind(window);
   window.fetch = (input, init) => {
     const m = ((init && init.method) || (input && input.method) || "GET").toUpperCase();
-    if (m !== "GET" && m !== "HEAD") clearApiCache();
-    return _fetch(input, init).then((r) => { if (m !== "GET" && m !== "HEAD") clearApiCache(); return r; });
+    const write = m !== "GET" && m !== "HEAD";
+    const target = typeof input === "string" ? input : (input && input.url) || "";
+    // solo las llamadas a nuestra propia API tocan la caché
+    const ours = /\/api(\/|$)/.test(target);
+    if (write && ours) invalidateApiCache(target);
+    return _fetch(input, init).then((r) => { if (write && ours) invalidateApiCache(target); return r; });
   };
 }
 
@@ -117,6 +149,16 @@ export const uploadReceipt = (id, file) => {
 
 export const deleteReceipt = (id, receiptId) =>
   api.delete(`/reservations/${id}/receipts/${receiptId}`).then(r => r.data);
+
+// Archivo servido por la API (p. ej. "/api/receipt-files/abc.jpg"): si la API vive en otro
+// origen (window.__API_BASE_URL__) se le antepone; si no, se deja relativa.
+export const apiFileUrl = (u) =>
+  (typeof u === "string" && u.startsWith("/api/") ? `${BASE}${u.slice(4)}` : u);
+
+// Imagen de un comprobante. Contrato nuevo: el servidor puede mandar `url` SIN `data`
+// (el navegador la descarga aparte y la guarda en caché); los antiguos traen base64.
+export const receiptSrc = (img) =>
+  (img?.url ? apiFileUrl(img.url) : `data:${img?.content_type};base64,${img?.data}`);
 
 // Socios
 export const getSocios = () => api.get("/socios").then(r => r.data);

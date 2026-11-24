@@ -34,10 +34,10 @@ function EventCard({ ev, socioId, formatCurrency, onTogglePayment, onRemove }) {
   const rel = relLabel(ev.event_date);
   return (
     <motion.div
-      layout
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
+      exit={{ opacity: 0, y: -8, transition: { duration: 0.15 } }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
       data-testid={`profile-event-${ev.id}`}
       className={`group rounded-2xl p-3.5 border transition-all ${
         isPaid
@@ -116,16 +116,17 @@ export default function SocioProfileModal({ socio, events, formatCurrency, onTog
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
         className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-        style={{ background: "rgba(15,23,42,0.55)", backdropFilter: "blur(6px)" }}
+        style={{ background: "rgba(15,23,42,0.55)", backdropFilter: "blur(4px)" }}
         onClick={onClose}
         data-testid="socio-profile-modal"
       >
         <motion.div
-          initial={{ opacity: 0, scale: 0.94, y: 20 }}
+          initial={{ opacity: 0, scale: 0.97, y: 12 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.94, y: 20 }}
-          transition={{ type: "spring", damping: 26, stiffness: 320 }}
+          exit={{ opacity: 0, scale: 0.98, y: 8, transition: { duration: 0.15 } }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           onClick={e => e.stopPropagation()}
           className="w-full max-w-lg max-h-[88vh] flex flex-col rounded-3xl overflow-hidden shadow-2xl"
           style={{ background: "rgba(255,255,255,0.98)" }}
@@ -139,7 +140,7 @@ export default function SocioProfileModal({ socio, events, formatCurrency, onTog
             <div className="flex items-center gap-4">
               <div className="relative">
                 {socio.photo && socio.photo_content_type
-                  ? <img src={`data:${socio.photo_content_type};base64,${socio.photo}`} alt={socio.name} className="w-16 h-16 rounded-2xl object-cover ring-4 ring-white/30 shadow-lg" />
+                  ? <img src={`data:${socio.photo_content_type};base64,${socio.photo}`} alt={socio.name} decoding="async" className="w-16 h-16 rounded-2xl object-cover ring-4 ring-white/30 shadow-lg" />
                   : <div className="w-16 h-16 rounded-2xl bg-white/25 flex items-center justify-center ring-4 ring-white/30 shadow-lg"><span className="text-2xl font-black text-white">{socio.name?.charAt(0).toUpperCase()}</span></div>
                 }
                 <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-white flex items-center justify-center shadow"><RoleIcon size={12} className="text-indigo-600" /></div>
@@ -153,17 +154,17 @@ export default function SocioProfileModal({ socio, events, formatCurrency, onTog
 
             {/* Stats */}
             <div className="grid grid-cols-3 gap-2 mt-5">
-              <div className="bg-white/15 rounded-2xl px-2 py-2.5 text-center backdrop-blur-sm">
+              <div className="bg-white/15 rounded-2xl px-2 py-2.5 text-center">
                 <TrendingUp size={13} className="text-white/70 mx-auto mb-1" />
                 <p className="text-lg font-black text-white leading-none" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>{events.length}</p>
                 <p className="text-[9px] text-white/70 font-bold uppercase mt-1">Eventos</p>
               </div>
-              <div className="bg-white/15 rounded-2xl px-2 py-2.5 text-center backdrop-blur-sm">
+              <div className="bg-white/15 rounded-2xl px-2 py-2.5 text-center">
                 <CheckCircle size={13} className="text-emerald-200 mx-auto mb-1" />
                 <p className="text-sm font-black text-white leading-none">{formatCurrency(totalPaid)}</p>
                 <p className="text-[9px] text-white/70 font-bold uppercase mt-1">Pagado</p>
               </div>
-              <div className="bg-white/15 rounded-2xl px-2 py-2.5 text-center backdrop-blur-sm">
+              <div className="bg-white/15 rounded-2xl px-2 py-2.5 text-center">
                 <Wallet size={13} className="text-amber-200 mx-auto mb-1" />
                 <p className="text-sm font-black text-white leading-none">{formatCurrency(totalPending)}</p>
                 <p className="text-[9px] text-white/70 font-bold uppercase mt-1">Pendiente</p>

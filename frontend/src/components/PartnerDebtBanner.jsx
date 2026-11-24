@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { memo, useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Wallet, Sparkles, AlertCircle, Camera, Video, Users, ArrowRight, Flame, TrendingDown, CheckCircle, Clock, ChevronDown } from "lucide-react";
 
@@ -6,15 +6,26 @@ import { Wallet, Sparkles, AlertCircle, Camera, Video, Users, ArrowRight, Flame,
  * Big animated banner for the Socios (partners) page.
  * Rotates through partners with pending payments (name, role, amount, next event)
  * and shows the total debt owed to all partners in the top-right corner.
+ *
+ * Rendimiento: el fondo es estático (sin partículas, sin orbes girando con blur), la
+ * rotación de socios vive en <DebtTicker> (cada cambio solo redibuja esa parte, y se
+ * pausa con la ventana oculta) y los contadores animados en <CountUp>.
  */
 
 const ROLE_ICON = { "Fotógrafo": Camera, "Videógrafo": Video, "Asistente": Users };
+
+// Sin animaciones (ajuste «Animaciones» apagado o el sistema pide menos movimiento)
+const motionOff = () =>
+  typeof document !== "undefined" &&
+  (document.documentElement.dataset.animations === "false" ||
+    (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches));
 
 function useCounter(target, duration = 1400) {
   const [display, setDisplay] = useState(0);
   const raf = useRef(null);
   useEffect(() => {
     if (target === undefined || target === null) return;
+    if (motionOff()) { setDisplay(target); return; }
     const start = performance.now();
     const from = 0;
     const tick = (t) => {
@@ -29,27 +40,230 @@ function useCounter(target, duration = 1400) {
   return display;
 }
 
-function Particles({ count = 20 }) {
-  return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden">
-      {[...Array(count)].map((_, i) => {
-        const size = 2 + Math.random() * 4;
-        const left = Math.random() * 100;
-        const delay = Math.random() * 5;
-        const dur = 4 + Math.random() * 5;
-        return (
-          <motion.span
-            key={i}
-            className="absolute rounded-full bg-white"
-            style={{ width: size, height: size, left: `${left}%`, bottom: -10, filter: "blur(0.5px)" }}
-            animate={{ y: [0, -280 - Math.random() * 120], opacity: [0, 0.9, 0] }}
-            transition={{ duration: dur, delay, repeat: Infinity, ease: "easeOut" }}
-          />
-        );
-      })}
-    </div>
-  );
+// Número que cuenta hacia arriba: aislado para que el conteo (~60 cuadros) no redibuje todo el banner
+const CountUp = memo(function CountUp({ value, duration, format }) {
+  const v = useCounter(value, duration);
+  return format(v);
+});
+const roundNum = (v) => Math.round(v);
+
+// Índice que avanza cada `ms`; se detiene mientras la ventana está oculta/minimizada
+function useRotation(count, ms) {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    if (count < 2) return;
+    let id = null;
+    const start = () => { if (id === null) id = setInterval(() => setIdx((i) => (i + 1) % count), ms); };
+    const stop = () => { if (id !== null) { clearInterval(id); id = null; } };
+    const onVis = () => (document.hidden ? stop() : start());
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVis);
+    return () => { stop(); document.removeEventListener("visibilitychange", onVis); };
+  }, [count, ms]);
+  return [idx, setIdx];
 }
+
+// Rotating socio card + dots. Owns the ticker index so each tick only re-renders this part.
+const DebtTicker = memo(function DebtTicker({ debts, formatCurrency, jumpTo }) {
+  // Rotating ticker across debts (every 3.2s)
+  const [idx, setIdx] = useRotation(debts.length, 3200);
+
+  // If debts array changes size, reset idx safely
+  useEffect(() => { if (idx >= debts.length) setIdx(0); }, [debts.length, idx, setIdx]);
+
+  // Clic en una fila del desglose → mostrar ese socio
+  const handledJump = useRef(null);
+  useEffect(() => {
+    if (!jumpTo || handledJump.current === jumpTo) return;
+    handledJump.current = jumpTo;
+    setIdx(debts.findIndex((x) => x.socio_id === jumpTo.id));
+  }, [jumpTo, debts, setIdx]);
+
+  const current = debts[idx];
+  const CurIcon = current?.socio?.role ? (ROLE_ICON[current.socio.role] || Users) : Users;
+
+  return (
+    <>
+      {/* Rotating socio */}
+      {!current ? (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2 }}
+          className="flex flex-col items-start gap-3 pb-4"
+        >
+          <p
+            className="font-black text-white tracking-tighter"
+            style={{
+              fontFamily: "Cabinet Grotesk, sans-serif",
+              fontSize: "clamp(3rem, 8vw, 5rem)",
+              lineHeight: 1.05,
+              background: "linear-gradient(135deg,#fff,#a7f3d0)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+            }}
+          >
+            Al día
+          </p>
+          <p className="text-white/80 font-bold text-base">
+            No hay pagos pendientes al equipo. ¡Sigue así!
+          </p>
+        </motion.div>
+      ) : (
+        <div className="flex items-end gap-6 flex-wrap">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={current.socio_id + "-" + idx}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } }}
+              exit={{ opacity: 0, y: -12, transition: { duration: 0.15 } }}
+              className="flex items-center gap-5 flex-1 min-w-[260px]"
+            >
+              {/* Avatar */}
+              <div className="relative shrink-0">
+                {current.socio.photo && current.socio.photo_content_type ? (
+                  <img
+                    src={`data:${current.socio.photo_content_type};base64,${current.socio.photo}`}
+                    alt={current.socio.name}
+                    decoding="async"
+                    className="w-24 h-24 rounded-3xl object-cover"
+                    style={{
+                      border: "3px solid rgba(255,255,255,0.35)",
+                      boxShadow: "0 15px 40px -8px rgba(244,63,94,0.55)",
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="w-24 h-24 rounded-3xl flex items-center justify-center"
+                    style={{
+                      background: "linear-gradient(135deg,#f43f5e 0%,#a855f7 100%)",
+                      border: "3px solid rgba(255,255,255,0.35)",
+                      boxShadow: "0 15px 40px -8px rgba(244,63,94,0.55)",
+                    }}
+                  >
+                    <span
+                      className="text-4xl font-black text-white"
+                      style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
+                    >
+                      {current.socio.name?.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                )}
+                <div
+                  className="absolute -bottom-2 -right-2 w-8 h-8 rounded-2xl flex items-center justify-center"
+                  style={{
+                    background: "linear-gradient(135deg,#fff,#fed7aa)",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+                  }}
+                >
+                  <CurIcon size={14} className="text-rose-600" />
+                </div>
+              </div>
+
+              {/* Info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span
+                    className="text-[10px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider"
+                    style={{
+                      background: "rgba(255,255,255,0.15)",
+                      border: "1px solid rgba(255,255,255,0.25)",
+                      color: "white",
+                    }}
+                    data-testid="banner-partner-role"
+                  >
+                    {current.socio.role || "Socio"}
+                  </span>
+                  <span>
+                    <Sparkles size={14} className="text-yellow-300" />
+                  </span>
+                </div>
+                <p
+                  className="font-black text-white tracking-tight leading-none"
+                  style={{
+                    fontFamily: "Cabinet Grotesk, sans-serif",
+                    fontSize: "clamp(2rem, 4.5vw, 3.25rem)",
+                    textShadow: "0 4px 30px rgba(244,63,94,0.35)",
+                  }}
+                  data-testid="banner-partner-name"
+                >
+                  {current.socio.name}
+                </p>
+                <div className="mt-3 flex items-baseline gap-2 flex-wrap">
+                  <span className="text-white/70 text-xs font-bold uppercase tracking-widest">
+                    Se le debe
+                  </span>
+                  <p
+                    className="font-black tracking-tight leading-none"
+                    style={{
+                      fontFamily: "Cabinet Grotesk, sans-serif",
+                      fontSize: "clamp(2.25rem, 5vw, 3.75rem)",
+                      background: "linear-gradient(135deg,#fef3c7 0%,#fda4af 50%,#f9a8d4 100%)",
+                      WebkitBackgroundClip: "text",
+                      WebkitTextFillColor: "transparent",
+                    }}
+                    data-testid="banner-partner-amount"
+                  >
+                    {formatCurrency(current.pending)}
+                  </p>
+                </div>
+                {current.next && (
+                  <motion.div
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.1, duration: 0.2 }}
+                    className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full"
+                    style={{
+                      background: "rgba(255,255,255,0.10)",
+                      border: "1px solid rgba(255,255,255,0.18)",
+                    }}
+                  >
+                    <TrendingDown size={12} className="text-amber-300" />
+                    <span className="text-white/85 text-[11px] font-bold">
+                      {current.next.event_type}
+                      {current.next.event_date
+                        ? ` · ${current.next.event_date.split("-").reverse().join("/")}`
+                        : ""}
+                    </span>
+                    <span className="text-white/50 text-[11px] font-semibold">
+                      · {current.count} {current.count === 1 ? "evento" : "eventos"}
+                    </span>
+                  </motion.div>
+                )}
+              </div>
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* Dots pagination for ticker */}
+      {debts.length > 1 && (
+        <div className="mt-6 flex items-center gap-1.5" data-testid="banner-dots">
+          {debts.slice(0, 8).map((d, i) => (
+            <button
+              key={d.socio_id}
+              onClick={() => setIdx(i)}
+              aria-label={`Ver socio ${i + 1}`}
+              className="h-1.5 rounded-full transition-all"
+              style={{
+                width: i === idx ? 28 : 8,
+                background:
+                  i === idx
+                    ? "linear-gradient(90deg,#fda4af,#fdba74)"
+                    : "rgba(255,255,255,0.25)",
+              }}
+            />
+          ))}
+          {debts.length > 8 && (
+            <span className="text-white/50 text-[10px] font-bold ml-1">
+              +{debts.length - 8}
+            </span>
+          )}
+        </div>
+      )}
+    </>
+  );
+});
 
 export default function PartnerDebtBanner({
   socios = [],
@@ -60,6 +274,7 @@ export default function PartnerDebtBanner({
 }) {
   const [expandedSocioId, setExpandedSocioId] = useState(null);
   const [togglingKey, setTogglingKey] = useState(null);
+  const [jumpTo, setJumpTo] = useState(null);   // { id } al hacer clic en una fila del desglose
   // Build debt per socio
   const debts = useMemo(() => {
     const map = new Map();
@@ -91,23 +306,7 @@ export default function PartnerDebtBanner({
   }, [reservations, socios]);
 
   const totalDebt = useMemo(() => debts.reduce((s, d) => s + d.pending, 0), [debts]);
-  const totalDebtAnim = useCounter(totalDebt, 1600);
   const socioCount = debts.length;
-  const socioCountAnim = useCounter(socioCount, 1000);
-
-  // Rotating ticker across debts (every 3.2s)
-  const [idx, setIdx] = useState(0);
-  useEffect(() => {
-    if (debts.length < 2) return;
-    const id = setInterval(() => setIdx((i) => (i + 1) % debts.length), 3200);
-    return () => clearInterval(id);
-  }, [debts.length]);
-
-  // If debts array changes size, reset idx safely
-  useEffect(() => { if (idx >= debts.length) setIdx(0); }, [debts.length, idx]);
-
-  const current = debts[idx];
-  const CurIcon = current?.socio?.role ? (ROLE_ICON[current.socio.role] || Users) : Users;
 
   // Top 4 for breakdown
   const top = debts.slice(0, 4);
@@ -116,9 +315,9 @@ export default function PartnerDebtBanner({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       className="relative overflow-hidden rounded-[32px] mb-8 shadow-2xl"
       style={{
         background:
@@ -127,15 +326,13 @@ export default function PartnerDebtBanner({
       }}
       data-testid="partner-debt-banner"
     >
-      {/* Animated gradient overlay */}
-      <motion.div
+      {/* Gradient overlay (quieto) */}
+      <div
         className="absolute inset-0 opacity-70 pointer-events-none"
         style={{
           background:
             "radial-gradient(60% 80% at 15% 25%, rgba(244,63,94,0.35), transparent 60%), radial-gradient(50% 80% at 85% 75%, rgba(251,146,60,0.30), transparent 60%)",
         }}
-        animate={{ opacity: [0.55, 0.9, 0.55] }}
-        transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
       />
 
       {/* Grain */}
@@ -147,38 +344,33 @@ export default function PartnerDebtBanner({
         }}
       />
 
-      {/* Rotating orbs */}
-      <motion.div
-        className="absolute -right-24 -top-24 w-96 h-96 rounded-full pointer-events-none"
+      {/* Halos de color en las esquinas: antes eran orbes cónicos girando con blur(70-90px);
+          ahora quietos y sin filtro (un degradado radial suave da el mismo halo, mismo centro) */}
+      <div
+        className="absolute rounded-full pointer-events-none"
         style={{
+          right: -234, top: -234, width: 660, height: 660,
           background:
-            "conic-gradient(from 0deg, #f43f5e, #f97316, #eab308, #f43f5e)",
-          filter: "blur(70px)",
+            "radial-gradient(circle closest-side, rgba(242,119,41,0.97) 0%, rgba(242,119,41,0.88) 30%, rgba(242,119,41,0.47) 58%, rgba(242,119,41,0.13) 79%, rgba(242,119,41,0) 100%)",
           opacity: 0.35,
         }}
-        animate={{ rotate: 360 }}
-        transition={{ duration: 22, repeat: Infinity, ease: "linear" }}
       />
-      <motion.div
-        className="absolute -left-32 -bottom-32 w-[420px] h-[420px] rounded-full pointer-events-none"
+      <div
+        className="absolute rounded-full pointer-events-none"
         style={{
+          left: -308, bottom: -308, width: 780, height: 780,
           background:
-            "conic-gradient(from 180deg, #a855f7, #ec4899, #f43f5e, #a855f7)",
-          filter: "blur(90px)",
+            "radial-gradient(circle closest-side, rgba(216,73,165,0.93) 0%, rgba(216,73,165,0.82) 31%, rgba(216,73,165,0.45) 54%, rgba(216,73,165,0.15) 77%, rgba(216,73,165,0) 100%)",
           opacity: 0.28,
         }}
-        animate={{ rotate: -360 }}
-        transition={{ duration: 28, repeat: Infinity, ease: "linear" }}
       />
-
-      <Particles count={22} />
 
       {/* CORNER — Total debt */}
       <motion.div
-        initial={{ opacity: 0, x: 20, y: -10 }}
-        animate={{ opacity: 1, x: 0, y: 0 }}
-        transition={{ delay: 0.3 }}
-        className="absolute top-5 right-5 z-20 rounded-2xl backdrop-blur-md px-4 py-3 pr-5"
+        initial={{ opacity: 0, x: 12 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ delay: 0.15, duration: 0.25 }}
+        className="absolute top-5 right-5 z-20 rounded-2xl px-4 py-3 pr-5"
         style={{
           background: "rgba(0,0,0,0.35)",
           border: "1px solid rgba(255,255,255,0.18)",
@@ -187,21 +379,14 @@ export default function PartnerDebtBanner({
         data-testid="banner-total-debt"
       >
         <div className="flex items-center gap-2 mb-1">
-          <motion.div
-            animate={{ rotate: [0, -8, 8, 0] }}
-            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-          >
+          <div>
             <Wallet size={12} className="text-rose-300" />
-          </motion.div>
+          </div>
           <p className="text-[9px] uppercase tracking-[0.28em] text-white/75 font-black">
             Deuda total
           </p>
           {isCritical && (
-            <motion.span
-              animate={{ opacity: [0.5, 1, 0.5] }}
-              transition={{ duration: 1.5, repeat: Infinity }}
-              className="w-1.5 h-1.5 rounded-full bg-rose-400"
-            />
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
           )}
         </div>
         <p
@@ -214,7 +399,7 @@ export default function PartnerDebtBanner({
             WebkitTextFillColor: "transparent",
           }}
         >
-          {formatCurrency(totalDebtAnim)}
+          <CountUp value={totalDebt} duration={1600} format={formatCurrency} />
         </p>
         <p className="text-[10px] text-white/60 font-bold mt-1">
           {socioCount} {socioCount === 1 ? "socio pendiente" : "socios pendientes"}
@@ -225,14 +410,12 @@ export default function PartnerDebtBanner({
         {/* LEFT — Rotating socio card */}
         <div className="flex flex-col justify-between">
           <div className="flex items-center gap-3 mb-6">
-            <motion.div
-              animate={{ scale: [1, 1.15, 1], rotate: [0, 8, -8, 0] }}
-              transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-              className="w-11 h-11 rounded-2xl flex items-center justify-center backdrop-blur-md"
+            <div
+              className="w-11 h-11 rounded-2xl flex items-center justify-center"
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)" }}
             >
               <AlertCircle size={20} className="text-white" strokeWidth={2} />
-            </motion.div>
+            </div>
             <div>
               <p className="text-[11px] uppercase tracking-[0.25em] text-white/70 font-black">
                 A quién le toca pagar
@@ -243,9 +426,9 @@ export default function PartnerDebtBanner({
             </div>
             {isCritical && (
               <motion.div
-                initial={{ scale: 0, rotate: -20 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: "spring", stiffness: 260, damping: 14, delay: 0.4 }}
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.2, ease: "easeOut", delay: 0.2 }}
                 className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider"
                 style={{
                   background: "linear-gradient(135deg,#f43f5e,#f97316)",
@@ -253,219 +436,32 @@ export default function PartnerDebtBanner({
                   boxShadow: "0 6px 20px -4px rgba(244,63,94,0.6)",
                 }}
               >
-                <motion.span animate={{ rotate: [0, -12, 12, 0] }} transition={{ duration: 1.4, repeat: Infinity }}>
+                <span>
                   <Flame size={12} />
-                </motion.span>
+                </span>
                 Urgente
               </motion.div>
             )}
           </div>
 
-          {/* Rotating socio */}
-          {!current ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex flex-col items-start gap-3 pb-4"
-            >
-              <p
-                className="font-black text-white tracking-tighter"
-                style={{
-                  fontFamily: "Cabinet Grotesk, sans-serif",
-                  fontSize: "clamp(3rem, 8vw, 5rem)",
-                  lineHeight: 1.05,
-                  background: "linear-gradient(135deg,#fff,#a7f3d0)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                }}
-              >
-                Al día
-              </p>
-              <p className="text-white/80 font-bold text-base">
-                No hay pagos pendientes al equipo. ¡Sigue así!
-              </p>
-            </motion.div>
-          ) : (
-            <div className="flex items-end gap-6 flex-wrap">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={current.socio_id + "-" + idx}
-                  initial={{ opacity: 0, y: 24, filter: "blur(8px)" }}
-                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                  exit={{ opacity: 0, y: -24, filter: "blur(8px)" }}
-                  transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-                  className="flex items-center gap-5 flex-1 min-w-[260px]"
-                >
-                  {/* Avatar */}
-                  <motion.div
-                    initial={{ scale: 0.6, rotate: -10 }}
-                    animate={{ scale: 1, rotate: 0 }}
-                    transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                    className="relative shrink-0"
-                  >
-                    {current.socio.photo && current.socio.photo_content_type ? (
-                      <img
-                        src={`data:${current.socio.photo_content_type};base64,${current.socio.photo}`}
-                        alt={current.socio.name}
-                        className="w-24 h-24 rounded-3xl object-cover"
-                        style={{
-                          border: "3px solid rgba(255,255,255,0.35)",
-                          boxShadow: "0 15px 40px -8px rgba(244,63,94,0.55)",
-                        }}
-                      />
-                    ) : (
-                      <div
-                        className="w-24 h-24 rounded-3xl flex items-center justify-center"
-                        style={{
-                          background: "linear-gradient(135deg,#f43f5e 0%,#a855f7 100%)",
-                          border: "3px solid rgba(255,255,255,0.35)",
-                          boxShadow: "0 15px 40px -8px rgba(244,63,94,0.55)",
-                        }}
-                      >
-                        <span
-                          className="text-4xl font-black text-white"
-                          style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
-                        >
-                          {current.socio.name?.charAt(0).toUpperCase()}
-                        </span>
-                      </div>
-                    )}
-                    <motion.div
-                      animate={{ scale: [1, 1.2, 1] }}
-                      transition={{ duration: 2, repeat: Infinity }}
-                      className="absolute -bottom-2 -right-2 w-8 h-8 rounded-2xl flex items-center justify-center"
-                      style={{
-                        background: "linear-gradient(135deg,#fff,#fed7aa)",
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-                      }}
-                    >
-                      <CurIcon size={14} className="text-rose-600" />
-                    </motion.div>
-                  </motion.div>
-
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span
-                        className="text-[10px] px-2 py-0.5 rounded-full font-black uppercase tracking-wider"
-                        style={{
-                          background: "rgba(255,255,255,0.15)",
-                          border: "1px solid rgba(255,255,255,0.25)",
-                          color: "white",
-                        }}
-                        data-testid="banner-partner-role"
-                      >
-                        {current.socio.role || "Socio"}
-                      </span>
-                      <motion.span
-                        animate={{ rotate: [0, 15, -15, 0] }}
-                        transition={{ duration: 2.4, repeat: Infinity }}
-                      >
-                        <Sparkles size={14} className="text-yellow-300" />
-                      </motion.span>
-                    </div>
-                    <p
-                      className="font-black text-white tracking-tight leading-none"
-                      style={{
-                        fontFamily: "Cabinet Grotesk, sans-serif",
-                        fontSize: "clamp(2rem, 4.5vw, 3.25rem)",
-                        textShadow: "0 4px 30px rgba(244,63,94,0.35)",
-                      }}
-                      data-testid="banner-partner-name"
-                    >
-                      {current.socio.name}
-                    </p>
-                    <div className="mt-3 flex items-baseline gap-2 flex-wrap">
-                      <span className="text-white/70 text-xs font-bold uppercase tracking-widest">
-                        Se le debe
-                      </span>
-                      <p
-                        className="font-black tracking-tight leading-none"
-                        style={{
-                          fontFamily: "Cabinet Grotesk, sans-serif",
-                          fontSize: "clamp(2.25rem, 5vw, 3.75rem)",
-                          background: "linear-gradient(135deg,#fef3c7 0%,#fda4af 50%,#f9a8d4 100%)",
-                          WebkitBackgroundClip: "text",
-                          WebkitTextFillColor: "transparent",
-                        }}
-                        data-testid="banner-partner-amount"
-                      >
-                        {formatCurrency(current.pending)}
-                      </p>
-                    </div>
-                    {current.next && (
-                      <motion.div
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: 0.15 }}
-                        className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md"
-                        style={{
-                          background: "rgba(255,255,255,0.10)",
-                          border: "1px solid rgba(255,255,255,0.18)",
-                        }}
-                      >
-                        <TrendingDown size={12} className="text-amber-300" />
-                        <span className="text-white/85 text-[11px] font-bold">
-                          {current.next.event_type}
-                          {current.next.event_date
-                            ? ` · ${current.next.event_date.split("-").reverse().join("/")}`
-                            : ""}
-                        </span>
-                        <span className="text-white/50 text-[11px] font-semibold">
-                          · {current.count} {current.count === 1 ? "evento" : "eventos"}
-                        </span>
-                      </motion.div>
-                    )}
-                  </div>
-                </motion.div>
-              </AnimatePresence>
-            </div>
-          )}
-
-          {/* Dots pagination for ticker */}
-          {debts.length > 1 && (
-            <div className="mt-6 flex items-center gap-1.5" data-testid="banner-dots">
-              {debts.slice(0, 8).map((d, i) => (
-                <button
-                  key={d.socio_id}
-                  onClick={() => setIdx(i)}
-                  aria-label={`Ver socio ${i + 1}`}
-                  className="h-1.5 rounded-full transition-all"
-                  style={{
-                    width: i === idx ? 28 : 8,
-                    background:
-                      i === idx
-                        ? "linear-gradient(90deg,#fda4af,#fdba74)"
-                        : "rgba(255,255,255,0.25)",
-                  }}
-                />
-              ))}
-              {debts.length > 8 && (
-                <span className="text-white/50 text-[10px] font-bold ml-1">
-                  +{debts.length - 8}
-                </span>
-              )}
-            </div>
-          )}
+          <DebtTicker debts={debts} formatCurrency={formatCurrency} jumpTo={jumpTo} />
         </div>
 
         {/* RIGHT — Top deudores breakdown */}
         <div className="flex flex-col justify-between gap-6">
           <motion.div
-            initial={{ opacity: 0, x: 20 }}
+            initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.35 }}
-            className="rounded-3xl p-6 backdrop-blur-md relative overflow-hidden"
+            transition={{ delay: 0.15, duration: 0.25 }}
+            className="rounded-3xl p-6 relative overflow-hidden"
             style={{
               background: "rgba(255,255,255,0.08)",
               border: "1px solid rgba(255,255,255,0.18)",
             }}
           >
-            <motion.div
+            <div
               className="absolute -right-8 -top-8 w-32 h-32 rounded-full"
-              style={{ background: "radial-gradient(circle, rgba(255,255,255,0.15), transparent 70%)" }}
-              animate={{ scale: [1, 1.2, 1], opacity: [0.6, 1, 0.6] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+              style={{ background: "radial-gradient(circle, rgba(255,255,255,0.15), transparent 70%)", opacity: 0.8 }}
             />
             <div className="flex items-center gap-2 mb-3 relative z-10">
               <Users size={14} className="text-rose-300" />
@@ -479,7 +475,7 @@ export default function PartnerDebtBanner({
                 style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
                 data-testid="banner-debt-count"
               >
-                {Math.round(socioCountAnim)}
+                <CountUp value={socioCount} duration={1000} format={roundNum} />
               </p>
               <p className="text-white/70 text-xs font-bold pb-2 leading-tight">
                 {socioCount === 1 ? "por pagar" : "por pagar"}
@@ -495,14 +491,14 @@ export default function PartnerDebtBanner({
                       key={d.socio_id}
                       initial={{ opacity: 0, x: 12 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.6 + i * 0.08 }}
+                      transition={{ delay: 0.2 + Math.min(i, 6) * 0.04, duration: 0.2 }}
                       className="rounded-xl overflow-hidden"
                       style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)" }}
                       data-testid={`banner-debt-row-${d.socio_id}`}
                     >
                       <div className="flex items-stretch">
                         <button
-                          onClick={() => { setIdx(debts.findIndex(x => x.socio_id === d.socio_id)); setExpandedSocioId(isExpanded ? null : d.socio_id); }}
+                          onClick={() => { setJumpTo({ id: d.socio_id }); setExpandedSocioId(isExpanded ? null : d.socio_id); }}
                           className="flex-1 flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-white/[0.10] transition-colors"
                           data-testid={`banner-debt-row-toggle-${d.socio_id}`}
                         >
@@ -511,6 +507,8 @@ export default function PartnerDebtBanner({
                               <img
                                 src={`data:${d.socio.photo_content_type};base64,${d.socio.photo}`}
                                 alt=""
+                                loading="lazy"
+                                decoding="async"
                                 className="w-6 h-6 rounded-lg object-cover shrink-0"
                               />
                             ) : (
@@ -560,9 +558,9 @@ export default function PartnerDebtBanner({
                       <AnimatePresence>
                         {isExpanded && (
                           <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: "auto", opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0, transition: { duration: 0.2 } }}
+                            exit={{ opacity: 0, transition: { duration: 0.12 } }}
                             className="overflow-hidden"
                           >
                             <div

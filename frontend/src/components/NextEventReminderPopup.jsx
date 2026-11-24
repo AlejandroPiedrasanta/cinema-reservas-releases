@@ -83,86 +83,39 @@ export default function NextEventReminderPopup({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.28 }}
+          transition={{ duration: 0.2 }}
           className="fixed inset-0 z-[120] flex items-center justify-center p-4"
-          style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(8px)" }}
+          style={{ background: "rgba(15,23,42,0.6)", backdropFilter: "blur(4px)" }}
           onClick={close}
           data-testid="reminder-popup-backdrop"
         >
           <motion.div
             key="reminder-card"
-            initial={{ scale: 0.7, opacity: 0, y: 40, rotate: -3 }}
-            animate={{ scale: 1, opacity: 1, y: 0, rotate: 0 }}
-            exit={{ scale: 0.85, opacity: 0, y: 20 }}
-            transition={{ type: "spring", stiffness: 200, damping: 18 }}
+            initial={{ scale: 0.96, opacity: 0, y: 12 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.98, opacity: 0, transition: { duration: 0.15 } }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             className="relative w-full max-w-md rounded-[32px] overflow-hidden shadow-2xl"
             style={{ background: heroBg, border: "1.5px solid rgba(255,255,255,0.2)" }}
             onClick={(e) => e.stopPropagation()}
             data-testid="reminder-popup-modal"
           >
-            {/* Rotating conic gradient glow */}
-            <motion.div
+            {/* Resplandores de color: quietos y con el degradado ya suave (sin filter: blur(70px)
+                ni rotación infinita) */}
+            <div
               className="absolute -right-24 -top-24 w-80 h-80 rounded-full pointer-events-none"
               style={{
-                background: "conic-gradient(from 0deg,#fbbf24,#f97316,#ef4444,#fbbf24)",
-                filter: "blur(70px)",
+                background: "radial-gradient(circle, rgba(249,115,22,0.85) 0%, rgba(251,191,36,0.55) 32%, rgba(239,68,68,0.2) 56%, transparent 72%)",
                 opacity: 0.55,
               }}
-              animate={{ rotate: 360 }}
-              transition={{ duration: 14, repeat: Infinity, ease: "linear" }}
             />
-            <motion.div
+            <div
               className="absolute -left-20 -bottom-20 w-72 h-72 rounded-full pointer-events-none"
               style={{
-                background: "conic-gradient(from 180deg,#f97316,#ec4899,#f59e0b,#f97316)",
-                filter: "blur(70px)",
+                background: "radial-gradient(circle, rgba(236,72,153,0.75) 0%, rgba(249,115,22,0.5) 32%, rgba(245,158,11,0.18) 56%, transparent 72%)",
                 opacity: 0.45,
               }}
-              animate={{ rotate: -360 }}
-              transition={{ duration: 18, repeat: Infinity, ease: "linear" }}
             />
-
-            {/* Confetti sparkles */}
-            {[...Array(18)].map((_, i) => (
-              <motion.span
-                key={i}
-                className="absolute rounded-full pointer-events-none"
-                style={{
-                  width: 3 + Math.random() * 3,
-                  height: 3 + Math.random() * 3,
-                  left: `${5 + Math.random() * 90}%`,
-                  top: `${5 + Math.random() * 90}%`,
-                  background: ["#fbbf24", "#fff", "#fecaca", "#fed7aa"][i % 4],
-                  filter: "blur(0.4px)",
-                }}
-                animate={{
-                  opacity: [0, 1, 0],
-                  scale: [0.4, 1.4, 0.4],
-                  y: [0, -14, 0],
-                }}
-                transition={{
-                  duration: 2 + Math.random() * 2.5,
-                  delay: Math.random() * 2,
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                }}
-              />
-            ))}
-
-            {/* Ring pulses (today only) */}
-            {isToday && (
-              <>
-                {[0, 1, 2].map(i => (
-                  <motion.div
-                    key={`ring-${i}`}
-                    className="absolute left-1/2 top-24 -translate-x-1/2 rounded-full pointer-events-none"
-                    style={{ width: 120, height: 120, border: "2px solid rgba(255,255,255,0.5)" }}
-                    animate={{ scale: [1, 2.4], opacity: [0.6, 0] }}
-                    transition={{ duration: 2.4, repeat: Infinity, delay: i * 0.8, ease: "easeOut" }}
-                  />
-                ))}
-              </>
-            )}
 
             {/* Close X */}
             <motion.button
@@ -170,7 +123,7 @@ export default function NextEventReminderPopup({
               whileTap={{ scale: 0.9 }}
               onClick={close}
               className="absolute top-4 right-4 z-30 w-9 h-9 rounded-full flex items-center justify-center text-white transition-colors"
-              style={{ background: "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.28)", backdropFilter: "blur(8px)" }}
+              style={{ background: "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.28)" }}
               data-testid="reminder-popup-close"
               aria-label="Close"
             >
@@ -182,24 +135,21 @@ export default function NextEventReminderPopup({
               <motion.div
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.22 }}
+                transition={{ delay: 0.08, duration: 0.2, ease: "easeOut" }}
                 className="flex items-center gap-1.5 text-[11px] uppercase tracking-[0.28em] text-amber-100/95 font-black mb-3"
               >
-                <motion.span
-                  animate={{ rotate: [0, -12, 12, 0] }}
-                  transition={{ duration: 1.4, repeat: Infinity, ease: "easeInOut" }}
-                >
+                <span>
                   <Bell size={13} strokeWidth={2.6} />
-                </motion.span>
+                </span>
                 {eyebrow}
               </motion.div>
 
               {/* Icon + Headline */}
               <div className="flex items-center gap-4 mb-4">
                 <motion.div
-                  initial={{ rotate: -30, scale: 0 }}
-                  animate={{ rotate: 0, scale: 1 }}
-                  transition={{ type: "spring", stiffness: 210, damping: 12, delay: 0.28 }}
+                  initial={{ opacity: 0, scale: 0.96 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.2, ease: "easeOut", delay: 0.1 }}
                   className="relative w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0"
                   style={{
                     background: "linear-gradient(135deg,#fff,#fed7aa)",
@@ -217,21 +167,13 @@ export default function NextEventReminderPopup({
                     }}
                   />
                   {isToday ? (
-                    <motion.span
-                      animate={{ rotate: [0, -8, 8, -8, 0], scale: [1, 1.12, 1] }}
-                      transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-                      className="relative"
-                    >
+                    <span className="relative">
                       <Flame size={30} style={{ color: "#c2410c" }} strokeWidth={2.4} />
-                    </motion.span>
+                    </span>
                   ) : (
-                    <motion.span
-                      animate={{ y: [0, -4, 0], rotate: [0, -6, 6, 0] }}
-                      transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                      className="relative"
-                    >
+                    <span className="relative">
                       <PartyPopper size={30} style={{ color: "#c2410c" }} strokeWidth={2.4} />
-                    </motion.span>
+                    </span>
                   )}
                 </motion.div>
 
@@ -239,7 +181,7 @@ export default function NextEventReminderPopup({
                   <motion.h2
                     initial={{ opacity: 0, x: -12 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.34 }}
+                    transition={{ delay: 0.12, duration: 0.2, ease: "easeOut" }}
                     className="text-3xl sm:text-4xl font-black text-white leading-none tracking-tight"
                     style={{ fontFamily: "Cabinet Grotesk, sans-serif", textShadow: "0 3px 12px rgba(0,0,0,0.25)" }}
                   >
@@ -248,7 +190,7 @@ export default function NextEventReminderPopup({
                   <motion.p
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    transition={{ delay: 0.44 }}
+                    transition={{ delay: 0.16, duration: 0.2 }}
                     className="text-white/90 text-sm font-bold mt-1.5"
                   >
                     {message}
@@ -260,8 +202,8 @@ export default function NextEventReminderPopup({
               <motion.div
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.5 }}
-                className="rounded-2xl p-4 mb-5 backdrop-blur-md"
+                transition={{ delay: 0.18, duration: 0.2, ease: "easeOut" }}
+                className="rounded-2xl p-4 mb-5"
                 style={{ background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.22)" }}
               >
                 <div className="flex items-center gap-3">
@@ -311,7 +253,7 @@ export default function NextEventReminderPopup({
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.58 }}
+                transition={{ delay: 0.22, duration: 0.2, ease: "easeOut" }}
                 className="flex gap-3"
               >
                 <motion.button

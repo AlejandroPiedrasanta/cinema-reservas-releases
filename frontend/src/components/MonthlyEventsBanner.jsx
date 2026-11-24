@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from "react";
+import { memo, useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CalendarDays, Sparkles, Zap, ArrowRight, Flame, Plus, ChevronDown, CalendarClock } from "lucide-react";
 import { getEventConfig } from "@/lib/eventConfig";
@@ -7,13 +7,24 @@ import { localDate } from "@/lib/apiMsg";
 /**
  * Big animated hero banner replacing the 4 stat cards.
  * Shows: current-month events (big) + total events + animated ticker of upcoming events.
+ *
+ * Rendimiento: fondo estático (sin partículas ni orbes girando con blur); el ticker que
+ * rota cada 3 s vive en <MonthTicker> (solo se redibuja esa línea y se pausa con la
+ * ventana oculta) y el número grande que cuenta hacia arriba en <CountUp>.
  */
+
+// Sin animaciones (ajuste «Animaciones» apagado o el sistema pide menos movimiento)
+const motionOff = () =>
+  typeof document !== "undefined" &&
+  (document.documentElement.dataset.animations === "false" ||
+    (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches));
 
 function useCounter(target, duration = 1200) {
   const [display, setDisplay] = useState(0);
   const raf = useRef(null);
   useEffect(() => {
     if (target === undefined || target === null) return;
+    if (motionOff()) { setDisplay(target); return; }
     const start = performance.now();
     const from = 0;
     const tick = (t) => {
@@ -28,28 +39,78 @@ function useCounter(target, duration = 1200) {
   return display;
 }
 
-// Floating sparkle particles
-function Particles({ count = 18 }) {
+// Número que cuenta hacia arriba, aislado para que el conteo no redibuje todo el banner
+const CountUp = memo(function CountUp({ value, duration }) {
+  return useCounter(value, duration);
+});
+
+// Índice que avanza cada `ms`; se detiene mientras la ventana está oculta/minimizada
+function useRotation(count, ms) {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    if (count < 2) return;
+    let id = null;
+    const start = () => { if (id === null) id = setInterval(() => setIdx((i) => (i + 1) % count), ms); };
+    const stop = () => { if (id !== null) { clearInterval(id); id = null; } };
+    const onVis = () => (document.hidden ? stop() : start());
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVis);
+    return () => { stop(); document.removeEventListener("visibilitychange", onVis); };
+  }, [count, ms]);
+  return [idx, setIdx];
+}
+
+// Ticker of upcoming events (rotates every 3s). Owns its index so each tick only re-renders this line.
+const MonthTicker = memo(function MonthTicker({ monthEvents, onViewAll }) {
+  const [tickerIdx] = useRotation(monthEvents.length, 3000);
+  const tickerEvent = monthEvents[tickerIdx];
+  const tickerCfg = tickerEvent ? getEventConfig(tickerEvent.event_type) : null;
+  const TickerIcon = tickerCfg?.icon;
+  if (!tickerEvent) return null;
+
   return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden">
-      {[...Array(count)].map((_, i) => {
-        const size = 2 + Math.random() * 4;
-        const left = Math.random() * 100;
-        const delay = Math.random() * 5;
-        const dur = 4 + Math.random() * 5;
-        return (
-          <motion.span
-            key={i}
-            className="absolute rounded-full bg-white"
-            style={{ width: size, height: size, left: `${left}%`, bottom: -10, filter: "blur(0.5px)" }}
-            animate={{ y: [0, -280 - Math.random() * 120], opacity: [0, 0.9, 0] }}
-            transition={{ duration: dur, delay, repeat: Infinity, ease: "easeOut" }}
-          />
-        );
-      })}
+    <div className="mt-6 relative h-14">
+      <AnimatePresence mode="wait">
+        <motion.button
+          key={tickerEvent.id}
+          onClick={onViewAll}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0, transition: { duration: 0.25 } }}
+          exit={{ opacity: 0, y: -12, transition: { duration: 0.15 } }}
+          className="absolute inset-0 flex items-center gap-3 px-4 py-3 rounded-2xl text-left"
+          style={{
+            background: "rgba(255,255,255,0.10)",
+            border: "1px solid rgba(255,255,255,0.20)",
+          }}
+          data-testid="banner-ticker"
+        >
+          {TickerIcon && (
+            <div
+              className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+              style={{ background: tickerCfg.fg }}
+            >
+              <TickerIcon size={16} className="text-white" />
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-white font-black text-sm truncate" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
+              {tickerEvent.event_type || "Evento"}
+              {tickerEvent.client_name ? ` · ${tickerEvent.client_name}` : ""}
+            </p>
+            <p className="text-white/60 text-xs font-semibold">
+              {(() => {
+                if (!tickerEvent.event_date) return "";
+                const [y, m, d] = tickerEvent.event_date.split("-");
+                return `${d}/${m}/${y}`;
+              })()}
+            </p>
+          </div>
+          <ArrowRight size={16} className="text-white/70 flex-shrink-0" />
+        </motion.button>
+      </AnimatePresence>
     </div>
   );
-}
+});
 
 export default function MonthlyEventsBanner({
   monthEvents = [],
@@ -84,8 +145,6 @@ export default function MonthlyEventsBanner({
     return language === "es" ? es : en;
   }, [language]);
 
-  const bigNum = useCounter(monthCount, 1000);
-
   // Days until next event
   let daysToNext = null;
   if (nextEvent?.event_date) {
@@ -96,24 +155,13 @@ export default function MonthlyEventsBanner({
     daysToNext = Math.max(0, Math.round((ev - today) / 86400000));
   }
 
-  // Cycling next-events ticker (rotates every 3s)
-  const [tickerIdx, setTickerIdx] = useState(0);
-  useEffect(() => {
-    if (monthEvents.length < 2) return;
-    const id = setInterval(() => setTickerIdx(i => (i + 1) % monthEvents.length), 3000);
-    return () => clearInterval(id);
-  }, [monthEvents.length]);
-  const tickerEvent = monthEvents[tickerIdx];
-  const tickerCfg = tickerEvent ? getEventConfig(tickerEvent.event_type) : null;
-  const TickerIcon = tickerCfg?.icon;
-
   const isHot = monthCount >= 3;
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
       className="relative overflow-hidden rounded-[32px] mb-8 shadow-2xl"
       style={{
         background:
@@ -122,15 +170,13 @@ export default function MonthlyEventsBanner({
       }}
       data-testid="monthly-events-banner"
     >
-      {/* Animated gradient overlay */}
-      <motion.div
+      {/* Gradient overlay (quieto) */}
+      <div
         className="absolute inset-0 opacity-70 pointer-events-none"
         style={{
           background:
             "radial-gradient(60% 80% at 20% 20%, rgba(236,72,153,0.35), transparent 60%), radial-gradient(50% 80% at 80% 80%, rgba(59,130,246,0.35), transparent 60%)",
         }}
-        animate={{ opacity: [0.6, 0.85, 0.6] }}
-        transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
       />
 
       {/* Grain / noise-ish texture using SVG */}
@@ -142,44 +188,37 @@ export default function MonthlyEventsBanner({
         }}
       />
 
-      {/* Rotating orb */}
-      <motion.div
-        className="absolute -right-24 -top-24 w-96 h-96 rounded-full pointer-events-none"
+      {/* Halos de color en las esquinas: antes eran orbes cónicos girando con blur(60-80px);
+          ahora quietos y sin filtro (un degradado radial suave da el mismo halo, mismo centro) */}
+      <div
+        className="absolute rounded-full pointer-events-none"
         style={{
+          right: -216, top: -216, width: 624, height: 624,
           background:
-            "conic-gradient(from 0deg, #ec4899, #8b5cf6, #3b82f6, #06b6d4, #ec4899)",
-          filter: "blur(60px)",
+            "radial-gradient(circle closest-side, rgba(110,119,214,0.98) 0%, rgba(110,119,214,0.97) 23%, rgba(110,119,214,0.84) 42%, rgba(110,119,214,0.5) 62%, rgba(110,119,214,0.16) 81%, rgba(110,119,214,0) 100%)",
           opacity: 0.35,
         }}
-        animate={{ rotate: 360 }}
-        transition={{ duration: 22, repeat: Infinity, ease: "linear" }}
       />
-      <motion.div
-        className="absolute -left-32 -bottom-32 w-[420px] h-[420px] rounded-full pointer-events-none"
+      <div
+        className="absolute rounded-full pointer-events-none"
         style={{
+          left: -288, bottom: -288, width: 740, height: 740,
           background:
-            "conic-gradient(from 180deg, #f97316, #ec4899, #a855f7, #f97316)",
-          filter: "blur(80px)",
+            "radial-gradient(circle closest-side, rgba(218,91,141,0.98) 0%, rgba(218,91,141,0.97) 14%, rgba(218,91,141,0.84) 35%, rgba(218,91,141,0.5) 57%, rgba(218,91,141,0.16) 78%, rgba(218,91,141,0) 100%)",
           opacity: 0.28,
         }}
-        animate={{ rotate: -360 }}
-        transition={{ duration: 28, repeat: Infinity, ease: "linear" }}
       />
-
-      <Particles count={22} />
 
       <div className="relative z-10 grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-8 p-8 md:p-10">
         {/* LEFT — Big month number */}
         <div className="flex flex-col justify-between">
           <div className="flex items-center gap-3 mb-6">
-            <motion.div
-              animate={{ scale: [1, 1.15, 1], rotate: [0, 8, -8, 0] }}
-              transition={{ duration: 3.5, repeat: Infinity, ease: "easeInOut" }}
-              className="w-11 h-11 rounded-2xl flex items-center justify-center backdrop-blur-md"
+            <div
+              className="w-11 h-11 rounded-2xl flex items-center justify-center"
               style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)" }}
             >
               <CalendarDays size={20} className="text-white" strokeWidth={2} />
-            </motion.div>
+            </div>
             <div>
               <p className="text-[11px] uppercase tracking-[0.25em] text-white/70 font-black">
                 {language === "es" ? "Eventos de" : "Events in"} {monthName}
@@ -190,9 +229,9 @@ export default function MonthlyEventsBanner({
             </div>
             {isHot && (
               <motion.div
-                initial={{ scale: 0, rotate: -20 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: "spring", stiffness: 260, damping: 14, delay: 0.4 }}
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.2, ease: "easeOut", delay: 0.2 }}
                 className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider"
                 style={{
                   background: "linear-gradient(135deg,#f97316,#ec4899)",
@@ -200,9 +239,9 @@ export default function MonthlyEventsBanner({
                   boxShadow: "0 6px 20px -4px rgba(236,72,153,0.6)",
                 }}
               >
-                <motion.span animate={{ rotate: [0, -12, 12, 0] }} transition={{ duration: 1.4, repeat: Infinity }}>
+                <span>
                   <Flame size={12} />
-                </motion.span>
+                </span>
                 {language === "es" ? "Mes activo" : "Hot month"}
               </motion.div>
             )}
@@ -211,9 +250,9 @@ export default function MonthlyEventsBanner({
           {/* Giant number */}
           <div className="flex items-end gap-6 flex-wrap">
             <motion.div
-              initial={{ scale: 0.6, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ type: "spring", stiffness: 180, damping: 16, delay: 0.2 }}
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.25, ease: "easeOut", delay: 0.1 }}
               className="relative"
               style={{ paddingBottom: "0.5rem", paddingTop: "0.5rem" }}
             >
@@ -236,15 +275,11 @@ export default function MonthlyEventsBanner({
                 }}
                 data-testid="banner-month-count"
               >
-                {bigNum}
+                <CountUp value={monthCount} duration={1000} />
               </p>
-              <motion.span
-                className="absolute -right-4 -top-2"
-                animate={{ rotate: [0, 15, -15, 0], scale: [1, 1.2, 1] }}
-                transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
-              >
+              <span className="absolute -right-4 -top-2">
                 <Sparkles size={22} className="text-pink-300" />
-              </motion.span>
+              </span>
             </motion.div>
 
             <div className="pb-4 min-w-[220px] flex-1">
@@ -267,7 +302,7 @@ export default function MonthlyEventsBanner({
                 <motion.p
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.6 }}
+                  transition={{ delay: 0.2, duration: 0.2 }}
                   className="text-white/85 text-base mt-3 font-bold flex items-center gap-2"
                 >
                   <Zap size={16} className="text-yellow-300" />
@@ -282,73 +317,27 @@ export default function MonthlyEventsBanner({
           </div>
 
           {/* Ticker of upcoming events */}
-          {tickerEvent && (
-            <div className="mt-6 relative h-14">
-              <AnimatePresence mode="wait">
-                <motion.button
-                  key={tickerEvent.id}
-                  onClick={onViewAll}
-                  initial={{ opacity: 0, y: 16, filter: "blur(6px)" }}
-                  animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                  exit={{ opacity: 0, y: -16, filter: "blur(6px)" }}
-                  transition={{ duration: 0.5 }}
-                  className="absolute inset-0 flex items-center gap-3 px-4 py-3 rounded-2xl backdrop-blur-md text-left"
-                  style={{
-                    background: "rgba(255,255,255,0.10)",
-                    border: "1px solid rgba(255,255,255,0.20)",
-                  }}
-                  data-testid="banner-ticker"
-                >
-                  {TickerIcon && (
-                    <motion.div
-                      animate={{ scale: [1, 1.12, 1] }}
-                      transition={{ duration: 1.6, repeat: Infinity }}
-                      className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-                      style={{ background: tickerCfg.fg }}
-                    >
-                      <TickerIcon size={16} className="text-white" />
-                    </motion.div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white font-black text-sm truncate" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
-                      {tickerEvent.event_type || "Evento"}
-                      {tickerEvent.client_name ? ` · ${tickerEvent.client_name}` : ""}
-                    </p>
-                    <p className="text-white/60 text-xs font-semibold">
-                      {(() => {
-                        if (!tickerEvent.event_date) return "";
-                        const [y, m, d] = tickerEvent.event_date.split("-");
-                        return `${d}/${m}/${y}`;
-                      })()}
-                    </p>
-                  </div>
-                  <ArrowRight size={16} className="text-white/70 flex-shrink-0" />
-                </motion.button>
-              </AnimatePresence>
-            </div>
-          )}
+          <MonthTicker monthEvents={monthEvents} onViewAll={onViewAll} />
         </div>
 
         {/* RIGHT — Clean "Próximos eventos" with hover/click reveal + CTA */}
         <div className="flex flex-col justify-between gap-6">
           <motion.div
-            initial={{ opacity: 0, x: 20 }}
+            initial={{ opacity: 0, x: 12 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.35 }}
+            transition={{ delay: 0.15, duration: 0.25 }}
             onMouseEnter={() => setUpcomingOpen(true)}
             onMouseLeave={() => setUpcomingOpen(false)}
-            className="rounded-3xl backdrop-blur-md relative overflow-hidden"
+            className="rounded-3xl relative overflow-hidden"
             style={{
               background: "rgba(255,255,255,0.08)",
               border: "1px solid rgba(255,255,255,0.18)",
             }}
             data-testid="banner-upcoming-card"
           >
-            <motion.div
+            <div
               className="absolute -right-8 -top-8 w-32 h-32 rounded-full pointer-events-none"
-              style={{ background: "radial-gradient(circle, rgba(255,255,255,0.15), transparent 70%)" }}
-              animate={{ scale: [1, 1.2, 1], opacity: [0.6, 1, 0.6] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+              style={{ background: "radial-gradient(circle, rgba(255,255,255,0.15), transparent 70%)", opacity: 0.8 }}
             />
 
             {/* Header — clickable to toggle on mobile */}
@@ -359,9 +348,7 @@ export default function MonthlyEventsBanner({
               data-testid="banner-upcoming-toggle"
               aria-expanded={upcomingOpen}
             >
-              <motion.div
-                animate={{ scale: [1, 1.08, 1] }}
-                transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+              <div
                 className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0"
                 style={{
                   background: "linear-gradient(135deg,#f472b6,#a78bfa)",
@@ -369,7 +356,7 @@ export default function MonthlyEventsBanner({
                 }}
               >
                 <CalendarClock size={22} className="text-white" strokeWidth={2.2} />
-              </motion.div>
+              </div>
               <div className="flex-1 min-w-0">
                 <p
                   className="text-white font-black leading-tight"
@@ -390,7 +377,7 @@ export default function MonthlyEventsBanner({
               </div>
               <motion.div
                 animate={{ rotate: upcomingOpen ? 180 : 0 }}
-                transition={{ duration: 0.3 }}
+                transition={{ duration: 0.2 }}
                 className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
                 style={{ background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.22)" }}
               >
@@ -398,15 +385,14 @@ export default function MonthlyEventsBanner({
               </motion.div>
             </button>
 
-            {/* Expandable list */}
+            {/* Expandable list (solo opacidad: animar la altura recalcula el diseño en cada cuadro) */}
             <AnimatePresence initial={false}>
               {upcomingOpen && upcomingList.length > 0 && (
                 <motion.div
                   key="upcoming-list"
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0, transition: { duration: 0.2, ease: [0.22, 1, 0.36, 1] } }}
+                  exit={{ opacity: 0, transition: { duration: 0.12 } }}
                   className="relative z-10 overflow-hidden"
                   data-testid="banner-upcoming-list"
                 >
@@ -424,7 +410,7 @@ export default function MonthlyEventsBanner({
                           key={ev.id || i}
                           initial={{ opacity: 0, x: 12 }}
                           animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.04 }}
+                          transition={{ delay: Math.min(i, 6) * 0.04, duration: 0.2 }}
                           onClick={() => onEventClick && onEventClick(ev.id)}
                           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left group hover:bg-white/10 transition-colors"
                           style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.10)" }}
@@ -470,8 +456,8 @@ export default function MonthlyEventsBanner({
               {upcomingOpen && upcomingList.length === 0 && (
                 <motion.p
                   initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
+                  animate={{ opacity: 1, transition: { duration: 0.2 } }}
+                  exit={{ opacity: 0, transition: { duration: 0.12 } }}
                   className="px-6 pb-6 text-white/60 text-sm font-semibold relative z-10"
                 >
                   {language === "es"
@@ -483,16 +469,22 @@ export default function MonthlyEventsBanner({
           </motion.div>
 
           <motion.button
-            whileHover={{ scale: 1.03, boxShadow: "0 20px 40px -12px rgba(236,72,153,0.55)" }}
+            whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             onClick={onCreate}
             data-testid="banner-create-btn"
-            className="w-full rounded-2xl px-6 py-4 font-black text-sm text-white uppercase tracking-widest flex items-center justify-center gap-2"
+            className="group relative w-full rounded-2xl px-6 py-4 font-black text-sm text-white uppercase tracking-widest flex items-center justify-center gap-2"
             style={{
               background: "linear-gradient(135deg,#ec4899 0%,#a855f7 60%,#3b82f6 100%)",
               boxShadow: "0 10px 30px -8px rgba(168,85,247,0.5)",
             }}
           >
+            {/* Sombra de hover: aparece con opacidad (antes se animaba box-shadow cuadro a cuadro) */}
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+              style={{ boxShadow: "0 20px 40px -12px rgba(236,72,153,0.55)" }}
+            />
             <Plus size={16} />
             {language === "es" ? "Nueva Reserva" : "New Reservation"}
           </motion.button>

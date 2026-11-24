@@ -16,13 +16,16 @@ export default function Layout({ children }) {
   const { tr, preset, logoUrl, logoSize, logoHidden, sidebarCompact, iconSize, sidebarStyle, islandMargins, navConfig } = useSettings();
   const sidebarLogoH = Math.min(Math.max(logoSize || 40, 24), 80);
 
-  // Sidebar sweep (barrido de luz al crear reserva/socio/etc)
+  // Sidebar sweep (barrido de luz al crear reserva/socio/etc). Solo transform/opacidad;
+  // con Animaciones apagadas o «reducir movimiento» no se hace.
   const [sweep, setSweep] = useState(null);
   useEffect(() => {
     const handler = (e) => {
+      if (document.documentElement.dataset.animations === "false") return;
+      if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
       const color = e.detail?.color || "purple";
       setSweep({ color, ts: Date.now() });
-      setTimeout(() => setSweep(null), 1300);
+      setTimeout(() => setSweep(null), 1000);
     };
     window.addEventListener("cp:sidebar-sweep", handler);
     return () => window.removeEventListener("cp:sidebar-sweep", handler);
@@ -87,7 +90,9 @@ export default function Layout({ children }) {
       borderRadius: `${mRadius}px`,
       boxShadow: "0 32px 80px rgba(31,38,135,0.22), 0 8px 30px rgba(0,0,0,0.1)",
       background: "rgba(255,255,255,0.88)",
-      backdropFilter: "blur(28px) saturate(180%)",
+      // rendimiento: desenfoque corto y sin saturate (con fondo al 88% el aspecto es el mismo)
+      backdropFilter: "blur(10px)",
+      WebkitBackdropFilter: "blur(10px)",
     },
     minimal: {
       background: "rgba(255,255,255,0.18)",
@@ -128,13 +133,13 @@ export default function Layout({ children }) {
         className="hidden md:flex flex-col min-h-screen glass-sidebar fixed left-0 top-0 z-20 transition-all duration-300 overflow-hidden"
         style={{ width: sidebarWidth, ...sidebarExtra }}
       >
-        {/* Aurora animada de fondo — efecto WOW continuo */}
+        {/* Aurora de fondo (manchas quietas) */}
         <div className="sidebar-aurora" aria-hidden="true">
           <span className="orb orb-1" />
           <span className="orb orb-2" />
           <span className="orb orb-3" />
         </div>
-        {/* Sweep overlay — barrido de luz épico */}
+        {/* Sweep overlay — barrido de luz (solo transform + opacidad, sin blur) */}
         <AnimatePresence>
           {sweep && (
             <motion.div
@@ -142,29 +147,25 @@ export default function Layout({ children }) {
               initial={{ y: "-100%", opacity: 0 }}
               animate={{ y: "100%", opacity: [0, 1, 1, 0] }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 1.2, ease: "easeInOut" }}
+              transition={{ duration: 0.9, ease: "easeInOut" }}
               className="pointer-events-none absolute inset-0 z-40"
               style={{
                 background: sweepGradient[sweep.color] || sweepGradient.purple,
                 mixBlendMode: "screen",
-                filter: "blur(6px)",
               }}
             />
           )}
         </AnimatePresence>
-        {/* Halo lateral pulsante */}
+        {/* Halo lateral: la sombra es fija, solo se anima la opacidad */}
         <AnimatePresence>
           {sweep && (
             <motion.div
               key={`halo-${sweep.ts}`}
-              initial={{ opacity: 0, boxShadow: "inset 0 0 0px rgba(255,255,255,0)" }}
-              animate={{ opacity: [0, 1, 0], boxShadow: [
-                "inset 0 0 0px rgba(255,255,255,0)",
-                "inset 0 0 60px rgba(255,255,255,0.35)",
-                "inset 0 0 0px rgba(255,255,255,0)"
-              ]}}
-              transition={{ duration: 1.2 }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 1, 0] }}
+              transition={{ duration: 0.9 }}
               className="pointer-events-none absolute inset-0 z-40"
+              style={{ boxShadow: "inset 0 0 60px rgba(255,255,255,0.35)" }}
             />
           )}
         </AnimatePresence>
@@ -194,9 +195,9 @@ export default function Layout({ children }) {
           {navItems.map(({ path, label, icon: Icon, tile }, idx) => (
             <motion.div
               key={path}
-              initial={{ opacity: 0, x: -18, filter: "blur(6px)" }}
-              animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
-              transition={{ delay: 0.05 + idx * 0.06, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: Math.min(idx, 6) * 0.03, duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
             >
             <NavLink
               to={path}
@@ -231,30 +232,22 @@ export default function Layout({ children }) {
                       height: compact ? 38 : 34,
                     }}
                     data-active={isActive ? "true" : "false"}
-                    animate={isActive ? { y: [0, -2, 0] } : { y: 0 }}
-                    transition={isActive ? { duration: 2.6, repeat: Infinity, ease: "easeInOut" } : { duration: 0.2 }}
                     whileHover={{ scale: 1.12, rotate: -4 }}
                   >
                     <Icon size={compact ? iconPx : iconPxInline} strokeWidth={isActive ? 2.4 : 2} />
-                    {/* Punto pulsante para el ítem activo */}
+                    {/* Punto del ítem activo (quieto: antes latía sin parar) */}
                     {isActive && !compact && (
-                      <motion.span
+                      <span
                         className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-emerald-400"
-                        animate={{ scale: [1, 1.5, 1], opacity: [0.6, 1, 0.6] }}
-                        transition={{ duration: 1.5, repeat: Infinity }}
-                        style={{ boxShadow: "0 0 8px rgba(52, 211, 153, 0.9)" }}
+                        style={{ opacity: 0.85, boxShadow: "0 0 8px rgba(52, 211, 153, 0.9)" }}
                       />
                     )}
                   </motion.span>
 
                   {!compact && (
-                    <motion.span
-                      className="sidebar-compact-label relative z-10"
-                      animate={isActive ? { x: [0, 2, 0] } : { x: 0 }}
-                      transition={isActive ? { duration: 3, repeat: Infinity, ease: "easeInOut" } : { duration: 0.2 }}
-                    >
+                    <span className="sidebar-compact-label relative z-10">
                       {label}
-                    </motion.span>
+                    </span>
                   )}
 
                   {/* Flecha que aparece al hover */}

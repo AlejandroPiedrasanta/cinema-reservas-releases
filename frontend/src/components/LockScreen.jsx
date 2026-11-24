@@ -54,30 +54,24 @@ export default function LockScreen() {
       style={{ background: "radial-gradient(ellipse at 50% 30%, #1e1b4b 0%, #0f0e1f 60%, #090812 100%)" }}
       data-testid="lock-screen">
 
-      {/* Floating decorative orbs */}
-      <motion.div className="absolute w-72 h-72 rounded-full pointer-events-none"
-        style={{ background: "radial-gradient(circle, rgba(99,102,241,0.22), transparent 70%)", top: "8%", left: "12%" }}
-        animate={{ y: [0, -30, 0], x: [0, 16, 0] }} transition={{ duration: 9, repeat: Infinity, ease: "easeInOut" }} />
-      <motion.div className="absolute w-96 h-96 rounded-full pointer-events-none"
-        style={{ background: "radial-gradient(circle, rgba(139,92,246,0.16), transparent 70%)", bottom: "5%", right: "8%" }}
-        animate={{ y: [0, 26, 0], x: [0, -20, 0] }} transition={{ duration: 11, repeat: Infinity, ease: "easeInOut" }} />
+      {/* Decorative orbs (quietos: degradado radial, sin animación infinita) */}
+      <div className="absolute w-72 h-72 rounded-full pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(99,102,241,0.22), transparent 70%)", top: "8%", left: "12%" }} />
+      <div className="absolute w-96 h-96 rounded-full pointer-events-none"
+        style={{ background: "radial-gradient(circle, rgba(139,92,246,0.16), transparent 70%)", bottom: "5%", right: "8%" }} />
 
       <motion.div
-        initial={{ opacity: 0, y: 30, scale: 0.94 }}
-        animate={unlocking ? { opacity: 0, scale: 1.08, filter: "blur(8px)" } : { opacity: 1, y: 0, scale: 1 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        initial={{ opacity: 0, y: 12, scale: 0.97 }}
+        animate={unlocking ? { opacity: 0, scale: 1.02 } : { opacity: 1, y: 0, scale: 1 }}
+        transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
         className="relative w-[min(400px,92vw)] rounded-3xl p-8 text-center"
-        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", backdropFilter: "blur(24px)", boxShadow: "0 30px 90px rgba(0,0,0,0.5)" }}>
+        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", backdropFilter: "blur(8px)", boxShadow: "0 30px 90px rgba(0,0,0,0.5)" }}>
 
-        {/* Lock icon with pulsing rings */}
+        {/* Lock icon */}
         <div className="relative w-20 h-20 mx-auto mb-5">
-          <motion.div className="absolute inset-0 rounded-3xl border-2 border-indigo-400/40"
-            animate={{ scale: [1, 1.55], opacity: [0.55, 0] }} transition={{ duration: 2.2, repeat: Infinity, ease: "easeOut" }} />
-          <motion.div className="absolute inset-0 rounded-3xl border-2 border-violet-400/40"
-            animate={{ scale: [1, 1.85], opacity: [0.45, 0] }} transition={{ duration: 2.2, repeat: Infinity, ease: "easeOut", delay: 0.5 }} />
           <motion.div
-            animate={error ? { x: [0, -10, 10, -8, 8, 0] } : { y: [0, -4, 0] }}
-            transition={error ? { duration: 0.5 } : { duration: 3, repeat: Infinity, ease: "easeInOut" }}
+            animate={error ? { x: [0, -10, 10, -8, 8, 0] } : { x: 0 }}
+            transition={{ duration: error ? 0.5 : 0.2 }}
             className="relative w-20 h-20 rounded-3xl flex items-center justify-center"
             style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", boxShadow: "0 12px 40px rgba(99,102,241,0.45)" }}>
             {unlocking ? <Unlock size={32} className="text-white" /> : <Lock size={32} className="text-white" />}
@@ -109,7 +103,8 @@ export default function LockScreen() {
 
           <AnimatePresence>
             {errMsg && (
-              <motion.p initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              <motion.p initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                transition={{ duration: 0.2, ease: "easeOut" }}
                 className="text-xs font-bold text-red-400" data-testid="lock-error-msg">
                 {errMsg}
               </motion.p>
@@ -135,7 +130,7 @@ export default function LockScreen() {
             </button>
           ) : (
             <div className="space-y-3">
-            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }}
+            <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2, ease: "easeOut" }}
               className="flex items-start gap-2.5 text-left rounded-2xl px-4 py-3"
               style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.25)" }}
               data-testid="lock-hint-box">

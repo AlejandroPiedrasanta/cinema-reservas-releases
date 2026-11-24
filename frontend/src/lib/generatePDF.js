@@ -1,4 +1,10 @@
-import jsPDF from "jspdf";
+// Rendimiento: jspdf (y html2canvas/purify que arrastra, ~400 KB) ya no se carga al abrir
+// la app: se descarga la primera vez que se exporta un PDF.
+let _jsPDF = null;
+async function loadJsPDF() {
+  if (!_jsPDF) _jsPDF = (await import("jspdf")).default;
+  return _jsPDF;
+}
 
 // ─── Theme definitions ─────────────────────────────────────────
 export const PDF_THEMES = {
@@ -93,6 +99,7 @@ const STATUS_LABELS = {
 // ─── INDIVIDUAL RESERVATION PDF ───────────────────────────────
 export async function generateReservationPDF(reservation, formatCurrency, logoBase64 = undefined, pdfThemeId = "oscuro") {
   const t = PDF_THEMES[pdfThemeId] || PDF_THEMES.oscuro;
+  const jsPDF = await loadJsPDF();
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
@@ -275,6 +282,7 @@ const ALL_STATUS_LIGHT = {
 
 export async function generateAllReservationsPDF(reservations, formatCurrency, logoBase64 = undefined, pdfThemeId = "oscuro") {
   const t = PDF_THEMES[pdfThemeId] || PDF_THEMES.oscuro;
+  const jsPDF = await loadJsPDF();
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
   const ml = 14, mr = W - 14, contentW = mr - ml;

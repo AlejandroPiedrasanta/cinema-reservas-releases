@@ -312,6 +312,9 @@ async def _save_embedded_data():
     if _save_lock.locked():
         return                              # el guardado en curso recogera este cambio
     async with _save_lock:
+        # Rendimiento: el endpoint y el middleware piden guardar casi a la vez; esperar un
+        # instante los junta en UNA escritura (antes eran dos completas con fsync y .bak).
+        await asyncio.sleep(0.05)
         while _save_pending and _using_embedded:
             _save_pending = False
             try:
@@ -322,12 +325,29 @@ async def _save_embedded_data():
                     data[col_name] = [_serialize_doc(d) for d in docs]
                 if not _using_embedded or db is not snap_db:
                     break                       # se cambio de base mientras tanto: no escribir
-                text = json.dumps(data, ensure_ascii=False, indent=1, default=str)
-                await asyncio.to_thread(_write_data_atomic, text)
-                logger.info(f"Data saved → {DATA_FILE.name}")
+                # convertir a texto en otro hilo (no congela el servidor) y sin sangria (mas chico)
+                escrito = await asyncio.to_thread(_dump_and_write_if_changed, data)
+                if escrito:
+                    logger.info(f"Data saved → {DATA_FILE.name}")
             except Exception as e:
                 logger.error(f"Failed to save data: {e}")
             await asyncio.sleep(0.2)        # agrupa los cambios que lleguen mientras tanto
+
+
+_last_saved_digest = None
+
+
+def _dump_and_write_if_changed(data) -> bool:
+    """Convierte a JSON y escribe solo si cambio algo desde el ultimo guardado
+    (el guardado de respaldo cada 60 s ya no reescribe el disco sin motivo)."""
+    global _last_saved_digest
+    text = json.dumps(data, ensure_ascii=False, separators=(",", ":"), default=str)
+    digest = hashlib.sha1(text.encode("utf-8")).digest()
+    if digest == _last_saved_digest and DATA_FILE.exists():
+        return False
+    _write_data_atomic(text)
+    _last_saved_digest = digest
+    return True
 
 
 async def _auto_save_loop():
@@ -494,7 +514,9 @@ async def lifespan(app_instance: FastAPI):
                 logger.warning(f"Marcado tema por defecto: {doc_st.get('name', 'Minimalista')}")
 
         if _using_embedded:
-            await _save_embedded_data()
+            # en segundo plano: el servidor ya puede contestar mientras se guarda (y si no
+            # cambio nada, ni siquiera se escribe el archivo)
+            asyncio.create_task(_save_embedded_data())
     except Exception as _theme_seed_err:
         logger.warning(f"No se pudo sembrar tema por defecto: {_theme_seed_err}")
 
@@ -899,13 +921,36 @@ async def delete_reservation(reservation_id: str):
         oid = ObjectId(reservation_id)
     except Exception:
         raise HTTPException(status_code=400, detail="ID inválido")
+    previa = await db.reservations.find_one({"_id": oid}, {"receipt_images.data": 0}) or {}
     result = await db.reservations.delete_one({"_id": oid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
+    _borrar_imagenes_recibos(previa.get("receipt_images") or [])
     if _using_embedded:
         asyncio.create_task(_save_embedded_data())
     _avisar_comprobantes()
     return {"message": "Reserva eliminada"}
+
+
+def _borrar_imagenes_recibos(recibos):
+    """Borra del disco las imagenes de comprobante guardadas como archivo."""
+    if sync_comprobantes is None:
+        return
+    for img in recibos:
+        if img.get("archivo"):
+            sync_comprobantes.borrar_imagen(img)
+
+
+@api_router.get("/receipt-files/{nombre}")
+async def receipt_file(nombre: str):
+    """Imagen de comprobante guardada como archivo (uploads/comprobantes). Su nombre es unico,
+    asi que el navegador la guarda en cache para siempre."""
+    p = sync_comprobantes.archivo_recibo(nombre) if sync_comprobantes is not None else None
+    if p is None or not p.is_file():
+        raise HTTPException(status_code=404, detail="Imagen no encontrada")
+    tipo = "image/png" if p.suffix.lower() == ".png" else "image/jpeg"
+    return FileResponse(str(p), media_type=tipo,
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
 # ─── Comprobantes (programa de comprobantes del estudio) ──────────────────────
@@ -1016,11 +1061,19 @@ async def delete_receipt(reservation_id: str, receipt_id: str):
         oid = ObjectId(reservation_id)
     except Exception:
         raise HTTPException(status_code=400, detail="ID inválido")
+    previa = await db.reservations.find_one({"_id": oid}, {"receipt_images.data": 0}) or {}
+    quitado = next((i for i in (previa.get("receipt_images") or []) if i.get("id") == receipt_id), None)
     result = await db.reservations.update_one(
         {"_id": oid}, {"$pull": {"receipt_images": {"id": receipt_id}}}
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
+    if quitado:
+        _borrar_imagenes_recibos([quitado])
+        if quitado.get("comprobante_pago_id") is not None and (previa.get("comprobante_sync") or {}).get("cliente_id"):
+            # vino de Comprobantes: que la sincronizacion no la vuelva a poner
+            await db.reservations.update_one(
+                {"_id": oid}, {"$addToSet": {"comprobante_sync.recibos_quitados": quitado["comprobante_pago_id"]}})
     if _using_embedded:
         asyncio.create_task(_save_embedded_data())
     return {"message": "Comprobante eliminado"}
@@ -1529,7 +1582,9 @@ async def _create_backup(label: str = "manual") -> dict:
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"backup_{label}_{ts}.json"
     filepath = BACKUP_DIR / filename
-    filepath.write_text(json.dumps(backup_data, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+    # en otro hilo: la copia diaria (a los 20 s de abrir) ya no congela el servidor
+    await asyncio.to_thread(lambda: filepath.write_text(
+        json.dumps(backup_data, ensure_ascii=False, indent=1, default=str), encoding="utf-8"))
     # Keep only last 15 backups
     existing = sorted(BACKUP_DIR.glob("backup_*.json"), key=lambda f: f.stat().st_mtime)
     for old in existing[:-15]:
@@ -2659,21 +2714,27 @@ async def _pull_themes_from_github(cfg: dict) -> dict:
                 })
                 imported += 1
 
-        # Aplicar default remoto si existe
+        # Aplicar default remoto SOLO si cambio desde la ultima vez (antes se reaplicaba en cada
+        # arranque: cambiaba appearance_updated_at, la pantalla se recargaba entera y se perdia
+        # la apariencia elegida por el usuario).
         remote_default = next((t for t in (data.get("themes") or []) if t.get("is_default")), None)
         if remote_default:
             doc_local = await db.saved_themes.find_one({"name": remote_default.get("name")})
             if doc_local:
-                await db.app_settings.update_one(
-                    {},
-                    {"$set": {
-                        "default_theme_id": str(doc_local["_id"]),
-                        "default_theme_name": doc_local.get("name", ""),
-                        "appearance_snapshot": doc_local.get("snapshot", {}),
-                        "appearance_updated_at": datetime.now(timezone.utc).isoformat(),
-                    }},
-                    upsert=True,
-                )
+                clave = hashlib.sha1(json.dumps([doc_local.get("name", ""), doc_local.get("snapshot", {})],
+                                                sort_keys=True, default=str).encode("utf-8")).hexdigest()
+                actual = await db.app_settings.find_one(
+                    {}, {"appearance_snapshot": 1, "themes_sync.default_aplicado": 1}) or {}
+                ya = (actual.get("themes_sync") or {}).get("default_aplicado")
+                if ya != clave:
+                    cambios = {"default_theme_id": str(doc_local["_id"]),
+                               "default_theme_name": doc_local.get("name", ""),
+                               "themes_sync.default_aplicado": clave}
+                    # primera vez con esta version: si ya hay apariencia, se respeta
+                    if ya is not None or not actual.get("appearance_snapshot"):
+                        cambios["appearance_snapshot"] = doc_local.get("snapshot", {})
+                        cambios["appearance_updated_at"] = datetime.now(timezone.utc).isoformat()
+                    await db.app_settings.update_one({}, {"$set": cambios}, upsert=True)
 
         await db.app_settings.update_one(
             {},
@@ -6784,6 +6845,22 @@ if BUILD_DIR is not None:
                 return resp
 
         app.mount("/static", _ImmutableStatic(directory=str(_static_dir)), name="static")
+
+    # Vite deja las pantallas en build/assets (nombres con hash): antes salian por la ruta
+    # comodin SIN cache y se descargaban y compilaban enteras en cada arranque.
+    _assets_dir = BUILD_DIR / "assets"
+    if _assets_dir.is_dir():
+        class _AssetsInmutables(StaticFiles):
+            async def get_response(self, path, scope):
+                resp = await super().get_response(path, scope)
+                try:
+                    if resp.status_code == 200:
+                        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+                except Exception:
+                    pass
+                return resp
+
+        app.mount("/assets", _AssetsInmutables(directory=str(_assets_dir)), name="assets")
 
     @app.get("/favicon.ico")
     async def favicon():

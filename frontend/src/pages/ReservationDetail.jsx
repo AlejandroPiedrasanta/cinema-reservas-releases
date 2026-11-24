@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useParams, useNavigate } from "react-router-dom";
-import { getReservation, uploadReceipt, deleteReceipt, updateReservation, deleteReservation } from "@/lib/api";
+import { getReservation, uploadReceipt, deleteReceipt, updateReservation, deleteReservation, receiptSrc } from "@/lib/api";
 import {
   ArrowLeft, Upload, Trash2, Save, X, ImageIcon,
   Calendar as CalIcon, Clock, MapPin, Users, Package as PackageIcon,
@@ -222,9 +222,9 @@ export default function ReservationDetail() {
     <div className="px-6 py-8 max-w-7xl mx-auto">
       {/* ============= HERO ============= */}
       <motion.div
-        initial={{ opacity: 0, y: -20 }}
+        initial={{ opacity: 0, y: -8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: easeOut }}
+        transition={{ duration: 0.22, ease: easeOut }}
         className="relative overflow-hidden rounded-[32px] mb-6 rd-hero"
         data-testid="reservation-hero"
       >
@@ -237,7 +237,7 @@ export default function ReservationDetail() {
             whileHover={{ scale: 1.1, x: -3 }}
             whileTap={{ scale: 0.9 }}
             onClick={() => navigate(-1)}
-            className="self-start p-3 rounded-2xl bg-white/70 backdrop-blur-md border border-white/50 text-slate-700 hover:bg-white transition-colors shadow-sm"
+            className="self-start p-3 rounded-2xl bg-white/75 border border-white/50 text-slate-700 hover:bg-white transition-colors shadow-sm"
             data-testid="back-btn"
           >
             <ArrowLeft size={18} />
@@ -245,16 +245,15 @@ export default function ReservationDetail() {
 
           {/* Avatar */}
           <motion.div
-            initial={{ scale: 0.6, rotate: -8, opacity: 0 }}
-            animate={{ scale: 1, rotate: 0, opacity: 1 }}
-            transition={{ type: "spring", stiffness: 220, damping: 18, delay: 0.05 }}
+            initial={{ scale: 0.96, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
             className={`rd-avatar bg-gradient-to-br ${statusMeta.grad}`}
             data-testid="client-avatar"
           >
             <span className="rd-avatar-initials">{initials}</span>
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 18, ease: "linear", repeat: Infinity }}
+            {/* halo quieto (antes giraba sin parar con un desenfoque encima) */}
+            <div
               className="absolute -inset-2 rounded-[32px] pointer-events-none"
               style={{
                 background: "conic-gradient(from 0deg, rgba(255,255,255,0.5), transparent 40%, rgba(255,255,255,0.35), transparent 80%)",
@@ -274,13 +273,13 @@ export default function ReservationDetail() {
                 <span className="rd-status-dot" />
                 {tr.statuses?.[reservation.status] || reservation.status}
               </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold text-slate-700 bg-white/70 backdrop-blur border border-white/60">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold text-slate-700 bg-white/75 border border-white/60">
                 <EventTypeIcon size={12} className="text-indigo-500" />
                 {reservation.event_type}
               </span>
               {daysToEvent !== null && (
                 <motion.span
-                  initial={{ scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.2, type: "spring", stiffness: 300 }}
+                  initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.1, duration: 0.2 }}
                   className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black tracking-wider
                     ${daysToEvent < 0 ? "bg-slate-100 text-slate-500" :
                        daysToEvent <= 3 ? "bg-rose-100 text-rose-600 rd-pulse" :
@@ -421,12 +420,9 @@ export default function ReservationDetail() {
                 onDrop={handleDrop} onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)}
                 onClick={() => fileRef.current?.click()} data-testid="upload-zone"
               >
-                <motion.div
-                  animate={{ y: [0, -6, 0] }} transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
-                  className="w-14 h-14 rounded-2xl bg-indigo-100/80 flex items-center justify-center mx-auto mb-4"
-                >
+                <div className="w-14 h-14 rounded-2xl bg-indigo-100/80 flex items-center justify-center mx-auto mb-4">
                   <Upload size={24} className="text-indigo-500" />
-                </motion.div>
+                </div>
                 <p className="text-base font-bold text-slate-600">{uploading ? dt.uploading : dt.uploadHint}</p>
                 <p className="text-xs text-slate-400 mt-1.5">{dt.uploadSub}</p>
               </motion.div>
@@ -437,14 +433,16 @@ export default function ReservationDetail() {
                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4" data-testid="receipts-grid"
                   onDrop={handleDrop} onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)}>
                   {reservation.receipt_images.map((img, i) => (
-                    <motion.div key={img.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i*0.07 }}
+                    <motion.div key={img.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: Math.min(i, 6) * 0.04, duration: 0.2 }}
                       className="relative group rounded-3xl overflow-hidden bg-slate-900/5 border border-white/50"
                       style={{ boxShadow: "0 4px 24px rgba(0,0,0,0.08)" }}>
                       {img.content_type?.startsWith("image/") ? (
                         <>
                           <img
-                            src={`data:${img.content_type};base64,${img.data}`}
+                            src={receiptSrc(img)}
                             alt={img.filename}
+                            loading="lazy"
+                            decoding="async"
                             className="w-full object-contain cursor-zoom-in rounded-3xl"
                             style={{ maxHeight: "520px", minHeight: "200px", background: "#f8fafc" }}
                             onClick={() => setLightbox(img)}
@@ -489,7 +487,7 @@ export default function ReservationDetail() {
             className="relative overflow-hidden rounded-3xl p-6 rd-payment-card"
           >
             <div className="flex items-center gap-2 mb-5">
-              <div className="w-8 h-8 rounded-xl bg-white/60 backdrop-blur flex items-center justify-center">
+              <div className="w-8 h-8 rounded-xl bg-white/70 flex items-center justify-center">
                 <CircleDollarSign size={14} className="text-indigo-500" />
               </div>
               <h2 className="text-xs font-black text-slate-500 uppercase tracking-widest">{dt.paymentSummary}</h2>
@@ -573,11 +571,12 @@ export default function ReservationDetail() {
               )}
             </div>
             <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              {/* barra: se anima con scaleX (en la tarjeta gráfica) en vez de width */}
               <motion.div
-                initial={{ width: 0 }} animate={{ width: `${paidPct}%` }}
-                transition={{ duration: 0.9, ease: easeOut, delay: 0.3 }}
-                className="h-full rounded-full"
-                style={{ background: "linear-gradient(90deg, #10b981, #34d399)" }}
+                initial={{ scaleX: 0 }} animate={{ scaleX: Math.min(Math.max(paidPct, 0), 100) / 100 }}
+                transition={{ duration: 0.35, ease: easeOut, delay: 0.1 }}
+                className="h-full w-full rounded-full"
+                style={{ background: "linear-gradient(90deg, #10b981, #34d399)", transformOrigin: "left" }}
                 data-testid="payment-progress"
               />
             </div>
@@ -614,15 +613,15 @@ export default function ReservationDetail() {
         {lightbox && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 flex items-center justify-center p-6"
-            style={{ backdropFilter: "blur(20px)", backgroundColor: "rgba(15,23,42,0.7)" }}
+            style={{ backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", backgroundColor: "rgba(15,23,42,0.78)" }}
             onClick={() => setLightbox(null)} data-testid="lightbox">
             <motion.button whileHover={{ scale: 1.1 }} className="absolute top-6 right-6 p-2.5 rounded-full glass text-white" onClick={() => setLightbox(null)}><X size={20} /></motion.button>
             {lightbox.content_type?.startsWith("image/") ? (
-              <motion.img initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-                src={`data:${lightbox.content_type};base64,${lightbox.data}`} alt={lightbox.filename}
+              <motion.img initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.2 }}
+                src={receiptSrc(lightbox)} alt={lightbox.filename} decoding="async"
                 className="max-w-full max-h-[85vh] object-contain rounded-3xl shadow-2xl" onClick={e => e.stopPropagation()} />
             ) : (
-              <motion.div initial={{ scale: 0.8 }} animate={{ scale: 1 }} className="glass-modal rounded-3xl p-10 text-center">
+              <motion.div initial={{ scale: 0.96 }} animate={{ scale: 1 }} transition={{ duration: 0.2 }} className="glass-modal rounded-3xl p-10 text-center">
                 <ImageIcon size={48} className="mx-auto text-slate-400 mb-3" /><p className="text-slate-700 font-bold">{lightbox.filename}</p>
               </motion.div>
             )}

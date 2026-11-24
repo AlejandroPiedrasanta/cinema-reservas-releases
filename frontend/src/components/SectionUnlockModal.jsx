@@ -1,4 +1,4 @@
-// Modal de desbloqueo por sección — con animaciones épicas
+// Modal de desbloqueo por sección (rendimiento: sin partículas ni pulsos infinitos)
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -54,90 +54,47 @@ export default function SectionUnlockModal({ sectionLock, onUnlock, onCancel }) 
         className="fixed inset-0 z-[300] flex items-center justify-center p-4"
         style={{
           background: "radial-gradient(circle at 50% 30%, rgba(139,92,246,0.35) 0%, rgba(15,23,42,0.92) 70%)",
-          backdropFilter: "blur(16px)",
+          backdropFilter: "blur(4px)",
         }}
       >
-        {/* Partículas de fondo */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          {Array.from({ length: 20 }).map((_, i) => (
-            <motion.div
-              key={i}
-              className="absolute rounded-full bg-white/20"
-              style={{
-                left: `${Math.random() * 100}%`,
-                top: `${Math.random() * 100}%`,
-                width: Math.random() * 4 + 2,
-                height: Math.random() * 4 + 2,
-              }}
-              animate={{
-                y: [0, -40, 0],
-                opacity: [0.2, 0.8, 0.2],
-              }}
-              transition={{
-                duration: Math.random() * 3 + 2,
-                delay: Math.random() * 2,
-                repeat: Infinity,
-                ease: "easeInOut",
-              }}
-            />
-          ))}
-        </div>
-
         <motion.form
           onSubmit={handleSubmit}
-          initial={{ scale: 0.85, opacity: 0, rotateX: -20, y: 30 }}
-          animate={{ scale: 1, opacity: 1, rotateX: 0, y: 0 }}
-          exit={{ scale: 0.9, opacity: 0 }}
-          transition={{ type: "spring", damping: 22, stiffness: 260 }}
+          initial={{ scale: 0.96, opacity: 0, y: 12 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.98, opacity: 0, transition: { duration: 0.15 } }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           className="relative w-full max-w-md rounded-3xl overflow-hidden"
           style={{
             boxShadow: "0 40px 100px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.1), 0 0 80px rgba(139,92,246,0.4)",
-            transformStyle: "preserve-3d",
           }}
         >
-          {/* Header con gradiente animado */}
+          {/* Header con gradiente */}
           <div className="relative bg-gradient-to-br from-purple-600 via-violet-600 to-indigo-600 p-6 overflow-hidden">
-            {/* Brillos decorativos */}
-            <motion.div
+            {/* Brillos decorativos (quietos, con la opacidad media que tenía la animación) */}
+            <div
               className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-white/20"
-              animate={{ scale: [1, 1.3, 1], opacity: [0.3, 0.5, 0.3] }}
-              transition={{ duration: 3, repeat: Infinity }}
+              style={{ opacity: 0.4 }}
             />
-            <motion.div
+            <div
               className="absolute -bottom-6 -left-6 w-32 h-32 rounded-full bg-white/15"
-              animate={{ scale: [1, 1.4, 1], opacity: [0.2, 0.4, 0.2] }}
-              transition={{ duration: 3.5, repeat: Infinity, delay: 0.5 }}
+              style={{ opacity: 0.3 }}
             />
 
             <button
               type="button"
               onClick={onCancel}
-              className="absolute right-4 top-4 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur flex items-center justify-center text-white transition-colors"
+              className="absolute right-4 top-4 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center text-white transition-colors"
               data-testid="section-lock-cancel"
             >
               <X size={16} />
             </button>
 
             <div className="relative flex items-center gap-4">
-              {/* Icono candado con anillos pulsantes */}
+              {/* Icono candado */}
               <div className="relative flex-shrink-0">
-                <motion.div
-                  className="absolute inset-0 rounded-2xl bg-white/40"
-                  animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
-                  transition={{ duration: 1.8, repeat: Infinity }}
-                />
-                <motion.div
-                  className="absolute inset-0 rounded-2xl bg-white/30"
-                  animate={{ scale: [1, 1.8, 1], opacity: [0.4, 0, 0.4] }}
-                  transition={{ duration: 1.8, repeat: Infinity, delay: 0.3 }}
-                />
-                <motion.div
-                  className="relative w-16 h-16 rounded-2xl bg-white/25 backdrop-blur flex items-center justify-center"
-                  animate={{ rotateY: [0, 15, -15, 0] }}
-                  transition={{ duration: 3, repeat: Infinity }}
-                >
+                <div className="relative w-16 h-16 rounded-2xl bg-white/25 flex items-center justify-center">
                   <Lock size={30} className="text-white" strokeWidth={2.2} />
-                </motion.div>
+                </div>
               </div>
 
               <div className="flex-1 text-white">
@@ -187,7 +144,8 @@ export default function SectionUnlockModal({ sectionLock, onUnlock, onCancel }) 
                 <motion.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
+                  exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
                   className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl p-3"
                   data-testid="section-lock-error"
                 >

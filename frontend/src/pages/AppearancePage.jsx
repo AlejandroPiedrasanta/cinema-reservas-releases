@@ -19,7 +19,7 @@ import { NavMenuSection } from "@/components/appearance/NavMenuSection";
 import { SavedThemesSection } from "@/components/appearance/SavedThemesSection";
 import { TutorialSection } from "@/components/appearance/TutorialSection";
 
-const stagger = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.06 } } };
+const stagger = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2, staggerChildren: 0.04 } } };
 
 function Toggle({ value, onChange, testId }) {
   return (
@@ -225,30 +225,26 @@ export default function AppearancePage() {
     <div className="px-6 py-8 max-w-7xl mx-auto">
       {/* HERO — Card Panel Style */}
       <motion.div
-        initial={{ opacity: 0, y: -30 }}
+        initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ type: "spring", stiffness: 150, damping: 20 }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
         className="relative mb-10 overflow-hidden rounded-[2.5rem] p-8 md:p-10 border border-white/70"
         style={{
           background: "linear-gradient(135deg, #fef3c7 0%, #fce7f3 40%, #dbeafe 100%)",
           boxShadow: "0 40px 100px -30px rgba(236,72,153,0.35), 0 20px 50px -20px rgba(59,130,246,0.25)",
         }}
       >
-        {/* Blobs decorativos */}
-        <motion.div
-          className="absolute -top-24 -right-16 w-80 h-80 rounded-full opacity-60 blur-3xl"
-          style={{ background: "#fbcfe8" }}
-          animate={{ x: [0, 40, -20, 0], y: [0, -30, 20, 0], scale: [1, 1.2, 0.9, 1] }}
-          transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
+        {/* Blobs decorativos (quietos; degradado radial en vez de blur-3xl) */}
+        <div
+          className="absolute -top-24 -right-16 w-80 h-80 rounded-full opacity-60"
+          style={{ background: "radial-gradient(closest-side, #fbcfe8 30%, rgba(251,207,232,0.5) 70%, rgba(251,207,232,0) 100%)", transform: "scale(1.4)" }}
         />
-        <motion.div
-          className="absolute -bottom-32 -left-20 w-96 h-96 rounded-full opacity-50 blur-3xl"
-          style={{ background: "#bfdbfe" }}
-          animate={{ x: [0, -30, 40, 0], y: [0, 40, -20, 0], scale: [1, 0.85, 1.15, 1] }}
-          transition={{ duration: 22, repeat: Infinity, ease: "easeInOut", delay: 2 }}
+        <div
+          className="absolute -bottom-32 -left-20 w-96 h-96 rounded-full opacity-50"
+          style={{ background: "radial-gradient(closest-side, #bfdbfe 30%, rgba(191,219,254,0.5) 70%, rgba(191,219,254,0) 100%)", transform: "scale(1.4)" }}
         />
 
-        {/* Cards flotantes decorativas detrás del título */}
+        {/* Cards decorativas detrás del título (quietas) */}
         <div className="absolute top-6 right-6 hidden lg:flex items-center gap-3 pointer-events-none">
           {[
             { c1: "#f472b6", c2: "#ec4899", rot: -8, y: 0 },
@@ -257,19 +253,13 @@ export default function AppearancePage() {
           ].map((c, i) => (
             <motion.div
               key={i}
-              initial={{ opacity: 0, y: -20, rotate: c.rot - 20 }}
-              animate={{
-                opacity: 1,
-                y: [c.y, c.y - 8, c.y],
-                rotate: c.rot,
-              }}
-              transition={{
-                opacity: { delay: 0.3 + i * 0.15, duration: 0.6 },
-                y: { duration: 3 + i * 0.5, repeat: Infinity, ease: "easeInOut", delay: i * 0.3 },
-                rotate: { delay: 0.3 + i * 0.15, duration: 0.6 },
-              }}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.1 + i * 0.04, duration: 0.25 }}
               className="w-16 h-24 md:w-20 md:h-28 rounded-2xl shadow-2xl"
               style={{
+                rotate: c.rot,
+                y: c.y,
                 background: `linear-gradient(135deg, ${c.c1}, ${c.c2})`,
                 boxShadow: `0 20px 40px -10px ${c.c2}80`,
               }}
@@ -278,15 +268,9 @@ export default function AppearancePage() {
         </div>
 
         <div className="relative z-10 flex items-center gap-5">
-          <motion.div
-            animate={{ rotate: [0, -6, 6, 0], y: [0, -4, 0] }}
-            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-            className="relative flex-shrink-0"
-          >
-            {/* Halo orbital */}
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 12, repeat: Infinity, ease: "linear" }}
+          <div className="relative flex-shrink-0">
+            {/* Halo de color (quieto) */}
+            <div
               className="absolute inset-0 rounded-full blur-2xl opacity-70"
               style={{ background: "conic-gradient(from 0deg, #ec4899, #f59e0b, #3b82f6, #ec4899)" }}
             />
@@ -299,13 +283,13 @@ export default function AppearancePage() {
             >
               <Palette size={32} className="text-white" strokeWidth={2.2} />
             </div>
-          </motion.div>
+          </div>
 
           <div className="min-w-0">
             <motion.h1
-              initial={{ opacity: 0, x: -20 }}
+              initial={{ opacity: 0, x: -10 }}
               animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.2, duration: 0.5 }}
+              transition={{ delay: 0.05, duration: 0.25 }}
               className="text-4xl md:text-6xl font-black tracking-tight leading-none"
               style={{
                 fontFamily: "Cabinet Grotesk, sans-serif",
@@ -320,7 +304,7 @@ export default function AppearancePage() {
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ delay: 0.4, duration: 0.5 }}
+              transition={{ delay: 0.1, duration: 0.25 }}
               className="text-sm md:text-base font-bold mt-2"
               style={{ color: "#831843", opacity: 0.75 }}
             >
@@ -409,7 +393,7 @@ export default function AppearancePage() {
                     className="relative flex flex-col rounded-2xl overflow-hidden text-left transition-all"
                     style={{ border: preset === p.id ? "2px solid var(--t-from)" : "2px solid rgba(226,232,240,0.8)" }}>
                     <div className="relative h-16 w-full overflow-hidden" style={{ background: p.bg }}>
-                      <div className="absolute inset-x-2 top-2 bottom-1.5 rounded-lg" style={{ background: p.id === "aurora" ? "rgba(255,255,255,0.45)" : p.id === "crystal" ? "rgba(255,255,255,0.9)" : "#fff", backdropFilter: p.id === "aurora" ? "blur(10px)" : "none", border: p.id === "aurora" ? "1px solid rgba(255,255,255,0.7)" : "1px solid #e2e8f0" }}>
+                      <div className="absolute inset-x-2 top-2 bottom-1.5 rounded-lg" style={{ background: p.id === "aurora" ? "rgba(255,255,255,0.45)" : p.id === "crystal" ? "rgba(255,255,255,0.9)" : "#fff", border: p.id === "aurora" ? "1px solid rgba(255,255,255,0.7)" : "1px solid #e2e8f0" }}>
                         <div style={{ height: 3, width: "65%", background: p.id === "aurora" ? "rgba(99,102,241,0.35)" : "#e2e8f0", borderRadius: 4, margin: "5px 5px 3px" }} />
                         <div style={{ height: 2, width: "45%", background: "#f1f5f9", borderRadius: 4, margin: "0 5px" }} />
                       </div>
@@ -708,6 +692,7 @@ export default function AppearancePage() {
                 initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
                 className="rounded-3xl border border-[var(--t-from)]/25 p-4 sm:p-5 space-y-5 mt-1 overflow-hidden relative"
                 style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.7), rgba(255,255,255,0.45))" }}
                 data-testid="island-panel"
@@ -741,7 +726,7 @@ export default function AppearancePage() {
                     {es ? "Vista previa" : "Preview"}
                   </span>
                   {/* island bar */}
-                  <motion.div layout
+                  <div
                     className="absolute flex flex-col items-center justify-start gap-1 py-1.5"
                     style={{
                       top: im.top * SC + 16,
@@ -754,9 +739,9 @@ export default function AppearancePage() {
                       border: "1px solid rgba(255,255,255,0.9)",
                     }}>
                     {[0,1,2,3].map(i => <div key={i} className="rounded-full" style={{ width: 12, height: 3, background: i === 0 ? "linear-gradient(90deg,var(--t-from),var(--t-to))" : "rgba(148,163,184,0.5)" }} />)}
-                  </motion.div>
+                  </div>
                   {/* content area */}
-                  <motion.div layout
+                  <div
                     className="absolute rounded-xl bg-white/55 border border-white/70"
                     style={{
                       top: im.top * SC + 16,
@@ -769,7 +754,7 @@ export default function AppearancePage() {
                       <div className="h-1.5 w-2/3 rounded bg-slate-200" />
                       <div className="h-1.5 w-1/2 rounded bg-slate-200" />
                     </div>
-                  </motion.div>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-5">
@@ -1030,7 +1015,7 @@ export default function AppearancePage() {
                 <Switch checked={usePdfLogo} onCheckedChange={val=>updateLogoSettings({usePdf:val})} data-testid="use-pdf-logo-toggle" />
               </div>
               {usePdfLogo && (
-                <motion.div initial={{opacity:0,height:0}} animate={{opacity:1,height:"auto"}} className="space-y-3 pl-1 border-l-2 border-slate-200 ml-1">
+                <motion.div initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} transition={{duration:0.2}} className="space-y-3 pl-1 border-l-2 border-slate-200 ml-1">
                   <div className="flex items-center justify-between">
                     <div><p className="text-xs font-bold text-slate-700">{es?"Logo diferente para PDFs":"Different PDF logo"}</p><p className="text-[10px] text-slate-400">{es?"Imagen distinta en documentos":"Different image for docs"}</p></div>
                     <Switch checked={useCustomPdfLogo} onCheckedChange={val=>updateLogoSettings({useCustomPdf:val})} data-testid="use-custom-pdf-logo-toggle" />
@@ -1357,7 +1342,7 @@ function StatusesEditor({ es, activeStatuses, customStatuses, changeStatusLabel,
       {/* Status list */}
       <div className="space-y-2 mb-4">
         {activeStatuses.map(s => (
-          <motion.div key={s.key} layout initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
+          <motion.div key={s.key} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.2 }}
             className="flex items-center gap-2.5 bg-white/60 border border-white/80 rounded-2xl px-3 py-2.5">
             {/* Color picker */}
             <div className="flex items-center gap-1 shrink-0">
@@ -1481,7 +1466,7 @@ function SiteTitlesSection({ es, customLabels, changeCustomLabel, resetCustomLab
   const hasChanges = Object.keys(customLabels).length > 0;
 
   return (
-    <motion.div variants={{ hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.22, 1, 0.36, 1] } } }} className="glass rounded-3xl p-7">
+    <motion.div variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }} className="glass rounded-3xl p-7">
       {/* Header */}
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3">

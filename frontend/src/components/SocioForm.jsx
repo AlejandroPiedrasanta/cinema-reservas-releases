@@ -99,7 +99,7 @@ export default function SocioForm({ socio, onClose, onSaved }) {
 
   const stagger = {
     hidden:  { opacity: 0, y: 12 },
-    visible: (i) => ({ opacity: 1, y: 0, transition: { delay: 0.05 * i, duration: 0.4, ease: [0.22, 1, 0.36, 1] } }),
+    visible: (i) => ({ opacity: 1, y: 0, transition: { delay: 0.04 * Math.min(i, 6), duration: 0.2, ease: [0.22, 1, 0.36, 1] } }),
   };
 
   return createPortal(
@@ -107,21 +107,21 @@ export default function SocioForm({ socio, onClose, onSaved }) {
       <motion.div
         key="ultra-socio-overlay"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-        transition={{ duration: 0.22 }}
+        transition={{ duration: 0.2 }}
         className="fixed inset-0 z-[100] flex items-center justify-center px-4 py-6 overflow-y-auto ultra-scroll"
         style={{
           background: "radial-gradient(1000px 600px at 15% 20%, rgba(6,182,212,0.28), transparent 60%), radial-gradient(900px 500px at 85% 80%, rgba(236,72,153,0.28), transparent 60%), rgba(3, 6, 23, 0.75)",
-          backdropFilter: "blur(24px)",
-          WebkitBackdropFilter: "blur(24px)",
+          backdropFilter: "blur(4px)",
+          WebkitBackdropFilter: "blur(4px)",
         }}
         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
         data-testid="socio-form"
       >
         <motion.div
-          initial={{ opacity: 0, scale: 0.94, y: 28 }}
+          initial={{ opacity: 0, scale: 0.97, y: 12 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.94, y: 16 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          exit={{ opacity: 0, scale: 0.98, y: 8, transition: { duration: 0.15 } }}
+          transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           className="relative w-full max-w-3xl max-h-[95vh] flex flex-col rounded-[32px] overflow-hidden ultra-glow-border"
           style={{
             background: "linear-gradient(160deg, rgba(10,12,40,0.94) 0%, rgba(17,24,58,0.94) 50%, rgba(30,15,55,0.94) 100%)",
@@ -183,7 +183,7 @@ export default function SocioForm({ socio, onClose, onSaved }) {
                 <motion.div variants={stagger} initial="hidden" animate="visible" custom={0} className="flex flex-col items-center gap-3 flex-shrink-0">
                   <label className="ultra-photo" data-testid="socio-photo-label">
                     {photoPreview
-                      ? <img src={photoPreview} alt="foto" />
+                      ? <img src={photoPreview} alt="foto" decoding="async" />
                       : <div className="ultra-photo-empty">
                           <Camera size={28} className="ultra-icon-float" strokeWidth={2} />
                           <span>AGREGAR FOTO</span>

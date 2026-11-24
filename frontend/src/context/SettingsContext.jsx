@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { setEventConfigOverrides } from "@/lib/eventConfig";
 import { getCloudAppearance, saveCloudAppearance, getSecurityStatus } from "@/lib/api";
 
@@ -235,6 +235,40 @@ const T = {
 };
 
 const SettingsContext = createContext(null);
+// Estado de la sincronización de apariencia en contexto aparte: cambia solo (guardando →
+// guardado) y así no vuelve a dibujar toda la app, solo quien lo muestra.
+const AppearanceSyncContext = createContext({ status: "idle", at: null });
+
+// Opacidad efectiva de las tarjetas .glass (ver index.css: ya no usan backdrop-filter).
+// Con «Desenfoque del vidrio» a 0 es exactamente la opacidad elegida; cuanto más desenfoque,
+// más esmerilado (denso) se ve el cristal, que es el efecto que daba el desenfoque.
+function applyGlassFill() {
+  const s = document.documentElement.style;
+  const op = parseFloat(s.getPropertyValue("--glass-bg-opacity"));
+  const blur = parseFloat(s.getPropertyValue("--glass-blur"));
+  const o = Number.isFinite(op) ? op : 0.45;
+  const b = Number.isFinite(blur) ? Math.min(Math.max(blur, 0), 40) : 20;
+  s.setProperty("--glass-fill", (o + (1 - o) * (b / 40) * 0.6).toFixed(3));
+}
+
+// Fuentes opcionales del ajuste "font_family": se descargan solo si están elegidas (antes
+// index.html bajaba 6 familias en cada arranque y bloqueaba la primera pintura).
+const OPTIONAL_FONTS = {
+  outfit:  "Outfit:wght@300;400;500;600;700;800;900",
+  space:   "Space+Grotesk:wght@300;400;500;600;700",
+  poppins: "Poppins:wght@300;400;500;600;700;800",
+  sora:    "Sora:wght@300;400;500;600;700;800",
+  dmsans:  "DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,700",
+};
+function ensureOptionalFont(key) {
+  const fam = OPTIONAL_FONTS[key];
+  if (!fam || document.getElementById(`cp-font-${key}`)) return;
+  const link = document.createElement("link");
+  link.id = `cp-font-${key}`;
+  link.rel = "stylesheet";
+  link.href = `https://fonts.googleapis.com/css2?family=${fam}&display=swap`;
+  document.head.appendChild(link);
+}
 
 function applyThemeVars(themeKey) {
   const t = THEMES[themeKey];
@@ -561,6 +595,8 @@ export function SettingsProvider({ children }) {
       document.documentElement.style.setProperty("--t-from", customAccent);
       document.documentElement.style.setProperty("--t-to",   customAccent + "cc");
     }
+    applyGlassFill();
+    ensureOptionalFont(fontFamily);
     setEventConfigOverrides(eventConfigs);
   }, []);
 
@@ -627,6 +663,7 @@ export function SettingsProvider({ children }) {
   const changeFontFamily = (val) => {
     setFontFamily(val);
     localStorage.setItem("font_family", val);
+    ensureOptionalFont(val);
     document.documentElement.dataset.font = val === "satoshi" ? "" : val;
   };
   const changeCardStyle = (val) => {
@@ -698,6 +735,7 @@ export function SettingsProvider({ children }) {
     setGlassBlur(val);
     localStorage.setItem("glass_blur", String(val));
     document.documentElement.style.setProperty("--glass-blur", `${val}px`);
+    applyGlassFill();
   };
   const changeLayoutDensity = (val) => {
     setLayoutDensity(val);
@@ -753,10 +791,10 @@ export function SettingsProvider({ children }) {
       case "headerHeight":    a("headerH",     value, "normal");      break;
       case "navActiveStyle":  a("navActive",   value, "background");  break;
       case "sidebarBrand":    a("sidebarBrand",value, "both");        break;
-      case "noiseTexture":    c("--noise-opacity", `${value / 100}`); break;
+      case "noiseTexture":    c("--noise-opacity", `${value / 100}`); el.dataset.noise = Number(value) > 0 ? "on" : ""; break;
       case "bgPattern":       a("bgPattern",   value, "none");        break;
       case "vignette":        a("vignette",    value, "none");        break;
-      case "glassOpacity":    c("--glass-bg-opacity", `${value / 100}`); break;
+      case "glassOpacity":    c("--glass-bg-opacity", `${value / 100}`); applyGlassFill(); break;
       case "glassBorder":     c("--glass-border-opacity", `${value / 100}`); break;
       case "blobCount":       a("blobCount",   value, 4);             break;
       case "blobAnim":        a("blobAnim",    value, "normal");      break;
@@ -884,7 +922,14 @@ export function SettingsProvider({ children }) {
         const localSyncedAt = localStorage.getItem("appearance_synced_at");
         // Only apply non-empty cloud snapshots (empty = never synced → local wins)
         if (snapshot && Object.keys(snapshot).length > 0 && updated_at && updated_at !== localSyncedAt) {
-          if (JSON.stringify(snapshot) !== JSON.stringify(getAppearanceSnapshot())) {
+          // Recargar SOLO si el contenido es distinto de lo ya aplicado (clave a clave, sin
+          // depender del orden ni de claves ajenas). Antes bastaba con que cambiara la fecha
+          // o el orden de las claves para recargar la app entera al arrancar.
+          const differs = APPEARANCE_KEYS.some((k) => {
+            const remote = snapshot[k] == null ? null : String(snapshot[k]);
+            return remote !== localStorage.getItem(k);
+          });
+          if (differs) {
             writeSnapshotLocal(snapshot);
             localStorage.setItem("appearance_synced_at", updated_at);
             window.location.reload();
@@ -902,7 +947,7 @@ export function SettingsProvider({ children }) {
   useEffect(() => {
     if (!syncReadyRef.current) return;
     if (pushTimerRef.current) clearTimeout(pushTimerRef.current);
-    setAppearanceSync(s => ({ ...s, status: "saving" }));
+    setAppearanceSync(s => (s.status === "saving" ? s : { ...s, status: "saving" }));
     pushTimerRef.current = setTimeout(async () => {
       try {
         const r = await saveCloudAppearance(getAppearanceSnapshot());
@@ -1052,7 +1097,9 @@ export function SettingsProvider({ children }) {
   }, [security.blockDragDrop]);
 
   const baseT = T[language] || T.es;
-  const tr = (() => {
+  // Rendimiento: las traducciones se recalculan (y clonan) solo si cambian idioma, etiquetas
+  // o estados, no en cada render.
+  const tr = useMemo(() => {
     const noLabels = !Object.keys(customLabels).length;
     const noStatuses = !customStatuses;
     if (noLabels && noStatuses) return baseT;
@@ -1069,18 +1116,22 @@ export function SettingsProvider({ children }) {
       merged.statuses = Object.fromEntries(customStatuses.map(s => [s.key, s.label]));
     }
     return merged;
-  })();
+  }, [baseT, customLabels, customStatuses]);
 
-  const formatCurrency = useCallback((n) => {
+  // Un único formateador por moneda (crear Intl.NumberFormat en cada llamada es caro en listas)
+  const currencyFormatter = useMemo(() => {
     const cur = CURRENCIES.find(c => c.code === currency) || CURRENCIES[0];
-    return new Intl.NumberFormat(cur.locale, { style: "currency", currency: cur.code, maximumFractionDigits: 0 }).format(n || 0);
+    return new Intl.NumberFormat(cur.locale, { style: "currency", currency: cur.code, maximumFractionDigits: 0 });
   }, [currency]);
+  const formatCurrency = useCallback((n) => currencyFormatter.format(n || 0), [currencyFormatter]);
 
   const currencyInfo = CURRENCIES.find(c => c.code === currency) || CURRENCIES[0];
   const currencySymbol = currencyInfo.symbol;
 
-  return (
-    <SettingsContext.Provider value={{
+  // Rendimiento: el valor del contexto solo cambia cuando cambia algún ajuste (antes era un
+  // objeto nuevo en cada render y hacía redibujar TODA la app). Las funciones change* solo
+  // usan estado incluido en las dependencias, así que nunca quedan desfasadas.
+  const value = useMemo(() => ({
       language, currency, theme, tr, formatCurrency, currencyInfo, currencySymbol,
       changeLanguage, changeCurrency, changeTheme,
       preset, animations, radius, pdfTheme,
@@ -1136,12 +1187,28 @@ export function SettingsProvider({ children }) {
       autoCheckUpdates, changeAutoCheckUpdates,
       tutorialEnabled, changeTutorialEnabled,
       showTour, startTour, endTour,
-      // Appearance cloud sync
-      getAppearanceSnapshot, applyAppearanceSnapshot, resetAppearanceToDefault, appearanceSync,
+      // Appearance cloud sync (el estado «guardando/guardado» va en useAppearanceSync)
+      getAppearanceSnapshot, applyAppearanceSnapshot, resetAppearanceToDefault,
       // Security
       security, appLocked, unlockApp, refreshSecurity,
-    }}>
-      {children}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), [
+      language, currency, theme, tr, formatCurrency, currencyInfo, preset, animations, radius, pdfTheme,
+      darkMode, fontScale, bgIntensity, cinematic, cinematicPattern, sidebarCompact, dateFormat,
+      fontFamily, cardStyle, animSpeed, shadowDepth, pageWidth, btnCorner, scrollbar,
+      customBgEnabled, bgColor1, bgColor2, customAccent, saturation, hoverEffect,
+      glassBlur, layoutDensity, pageTransition, iconSize, sidebarStyle, bgImage, advancedStyle,
+      eventConfigs, logoUrl, pdfLogoUrl, logoSize, usePdfLogo, useCustomPdfLogo, logoHidden,
+      customLabels, customStatuses, islandMargins, formFieldsVisibility, socioFieldsVisibility,
+      dashboardWidgets, dashboardRecentStyle, reservationFormDesign, socioFormDesign, swapNameEventType,
+      navConfig, autoCheckUpdates, tutorialEnabled, showTour, security, appLocked,
+    ]);
+
+  return (
+    <SettingsContext.Provider value={value}>
+      <AppearanceSyncContext.Provider value={appearanceSync}>
+        {children}
+      </AppearanceSyncContext.Provider>
     </SettingsContext.Provider>
   );
 }
@@ -1150,4 +1217,9 @@ export function useSettings() {
   const ctx = useContext(SettingsContext);
   if (!ctx) throw new Error("useSettings must be used within SettingsProvider");
   return ctx;
+}
+
+/** Estado de la sincronización de apariencia ({ status, at }). */
+export function useAppearanceSync() {
+  return useContext(AppearanceSyncContext);
 }

@@ -51,18 +51,18 @@ export default function EventNotificationPopup({
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.25 }}
+          transition={{ duration: 0.2 }}
           className="fixed inset-0 z-[110] flex items-center justify-center p-4"
-          style={{ background: "rgba(15,23,42,0.55)", backdropFilter: "blur(6px)" }}
+          style={{ background: "rgba(15,23,42,0.55)", backdropFilter: "blur(4px)" }}
           onClick={close}
           data-testid="event-popup-backdrop"
         >
           <motion.div
             key="popup-card"
-            initial={{ scale: 0.85, opacity: 0, y: 30, rotate: -1 }}
-            animate={{ scale: 1, opacity: 1, y: 0, rotate: 0 }}
-            exit={{ scale: 0.9, opacity: 0, y: 20 }}
-            transition={{ type: "spring", stiffness: 220, damping: 22 }}
+            initial={{ scale: 0.96, opacity: 0, y: 12 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.98, opacity: 0, transition: { duration: 0.15 } }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             className="relative w-full max-w-lg rounded-[28px] overflow-hidden shadow-2xl"
             style={{
               background:
@@ -72,48 +72,22 @@ export default function EventNotificationPopup({
             onClick={(e) => e.stopPropagation()}
             data-testid="event-popup-modal"
           >
-            {/* Animated glow blobs */}
-            <motion.div
+            {/* Resplandores de color: quietos y con el degradado ya suave (sin filter: blur(60px)
+                ni rotación infinita) */}
+            <div
               className="absolute -right-20 -top-20 w-72 h-72 rounded-full pointer-events-none"
               style={{
-                background: "conic-gradient(from 0deg,#ec4899,#a855f7,#3b82f6,#ec4899)",
-                filter: "blur(60px)",
+                background: "radial-gradient(circle, rgba(168,85,247,0.85) 0%, rgba(236,72,153,0.55) 32%, rgba(59,130,246,0.2) 56%, transparent 72%)",
                 opacity: 0.5,
               }}
-              animate={{ rotate: 360 }}
-              transition={{ duration: 18, repeat: Infinity, ease: "linear" }}
             />
-            <motion.div
+            <div
               className="absolute -left-16 -bottom-16 w-60 h-60 rounded-full pointer-events-none"
               style={{
-                background: "conic-gradient(from 180deg,#f97316,#ec4899,#a855f7,#f97316)",
-                filter: "blur(60px)",
+                background: "radial-gradient(circle, rgba(236,72,153,0.8) 0%, rgba(249,115,22,0.5) 32%, rgba(168,85,247,0.2) 56%, transparent 72%)",
                 opacity: 0.4,
               }}
-              animate={{ rotate: -360 }}
-              transition={{ duration: 22, repeat: Infinity, ease: "linear" }}
             />
-
-            {/* Sparkles */}
-            {[...Array(10)].map((_, i) => (
-              <motion.span
-                key={i}
-                className="absolute rounded-full bg-white pointer-events-none"
-                style={{
-                  width: 3,
-                  height: 3,
-                  left: `${5 + Math.random() * 90}%`,
-                  top: `${5 + Math.random() * 90}%`,
-                  filter: "blur(0.5px)",
-                }}
-                animate={{ opacity: [0, 1, 0], scale: [0.4, 1.2, 0.4] }}
-                transition={{
-                  duration: 2 + Math.random() * 2,
-                  delay: Math.random() * 2,
-                  repeat: Infinity,
-                }}
-              />
-            ))}
 
             {/* Close */}
             <button
@@ -130,9 +104,9 @@ export default function EventNotificationPopup({
               {/* Header */}
               <div className="flex items-start gap-4 mb-6">
                 <motion.div
-                  initial={{ rotate: -20, scale: 0 }}
-                  animate={{ rotate: 0, scale: 1 }}
-                  transition={{ type: "spring", stiffness: 220, damping: 12, delay: 0.15 }}
+                  initial={{ opacity: 0, scale: 0.96 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.2, ease: "easeOut", delay: 0.08 }}
                   className="relative w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
                   style={{
                     background: "linear-gradient(135deg,#ec4899,#a855f7)",
@@ -145,7 +119,7 @@ export default function EventNotificationPopup({
                   <motion.p
                     initial={{ opacity: 0, y: -6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.25 }}
+                    transition={{ delay: 0.1, duration: 0.2, ease: "easeOut" }}
                     className="text-[11px] uppercase tracking-[0.25em] text-pink-300 font-black flex items-center gap-1.5"
                   >
                     <Sparkles size={12} />
@@ -154,7 +128,7 @@ export default function EventNotificationPopup({
                   <motion.h2
                     initial={{ opacity: 0, y: 6 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.32 }}
+                    transition={{ delay: 0.13, duration: 0.2, ease: "easeOut" }}
                     className="text-2xl font-black text-white leading-tight mt-1"
                     style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
                   >
@@ -167,7 +141,7 @@ export default function EventNotificationPopup({
                   <motion.p
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    transition={{ delay: 0.4 }}
+                    transition={{ delay: 0.16, duration: 0.2 }}
                     className="text-white/70 text-sm font-semibold mt-1.5"
                   >
                     {language === "es"
@@ -186,10 +160,10 @@ export default function EventNotificationPopup({
                   return (
                     <motion.div
                       key={ev.id || i}
-                      initial={{ opacity: 0, x: -20 }}
+                      initial={{ opacity: 0, x: -12 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.45 + i * 0.08 }}
-                      className="flex items-center gap-3 px-4 py-3 rounded-2xl backdrop-blur-md"
+                      transition={{ delay: 0.18 + Math.min(i, 6) * 0.04, duration: 0.2, ease: "easeOut" }}
+                      className="flex items-center gap-3 px-4 py-3 rounded-2xl"
                       style={{
                         background: "rgba(255,255,255,0.08)",
                         border: "1px solid rgba(255,255,255,0.14)",
@@ -244,7 +218,7 @@ export default function EventNotificationPopup({
                   <motion.p
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    transition={{ delay: 0.8 }}
+                    transition={{ delay: 0.3, duration: 0.2 }}
                     className="text-center text-white/60 text-xs font-bold pt-1"
                   >
                     {language === "es" ? `+${extra} evento(s) más` : `+${extra} more event(s)`}

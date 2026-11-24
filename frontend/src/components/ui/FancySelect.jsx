@@ -92,7 +92,7 @@ export default function FancySelect({
             exit={{ opacity: 0, y: -6, scale: 0.97 }}
             transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
             role="listbox"
-            className="absolute z-40 mt-2 right-0 min-w-full w-max max-w-[280px] rounded-2xl bg-white/95 backdrop-blur-xl border border-slate-200/80 shadow-2xl ring-1 ring-black/5 p-1.5 overflow-hidden"
+            className="absolute z-40 mt-2 right-0 min-w-full w-max max-w-[280px] rounded-2xl bg-white/95 border border-slate-200/80 shadow-2xl ring-1 ring-black/5 p-1.5 overflow-hidden"
             data-testid={testId ? `${testId}-menu` : undefined}
           >
             <div className="max-h-72 overflow-y-auto scrollbar-thin">
@@ -132,9 +132,9 @@ export default function FancySelect({
                     <span className="truncate flex-1">{opt.label}</span>
                     {isSel && (
                       <motion.span
-                        initial={{ scale: 0, rotate: -90 }}
-                        animate={{ scale: 1, rotate: 0 }}
-                        transition={{ type: "spring", stiffness: 320, damping: 18 }}
+                        initial={{ opacity: 0, scale: 0.96 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
                         className="w-5 h-5 rounded-full btn-primary flex items-center justify-center shadow-sm"
                       >
                         <Check size={11} className="text-white" strokeWidth={3} />

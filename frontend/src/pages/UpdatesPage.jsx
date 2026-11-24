@@ -335,15 +335,13 @@ export default function UpdatesPage() {
   return (
     <div className="px-6 py-8 max-w-7xl mx-auto">
       {/* Header */}
-      <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="mb-8">
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="mb-8">
         <div className="flex items-center gap-3">
-          <motion.div
-            animate={{ rotate: [0, -8, 8, 0], scale: [1, 1.05, 1] }}
-            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+          <div
             className="w-12 h-12 rounded-2xl btn-primary flex items-center justify-center shadow-lg flex-shrink-0"
           >
             <Package size={22} className="text-white" strokeWidth={2} />
-          </motion.div>
+          </div>
           <h1 className="text-5xl font-black gradient-text tracking-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
             Actualizaciones
           </h1>
@@ -354,7 +352,7 @@ export default function UpdatesPage() {
       </motion.div>
 
       {/* Stats */}
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05, duration: 0.25 }}
         className="grid grid-cols-3 gap-4 mb-6">
         {[
           { label: managed ? "Versión instalada" : "Versión activa", value: managed && ghConfig?.local_version ? `v${ghConfig.local_version}` : latest ? `v${latest.version}` : "—", icon: Star, color: "bg-emerald-100 text-emerald-600" },
@@ -374,7 +372,7 @@ export default function UpdatesPage() {
       </motion.div>
 
       {/* Online update check */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, duration: 0.25 }}
         className="glass rounded-3xl p-6 mb-5">
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <div className="flex items-center gap-3 flex-1">
@@ -419,18 +417,17 @@ export default function UpdatesPage() {
         <AnimatePresence mode="wait">
           {ghResult?.has_updates && (
             <motion.div key="gh-update"
-              initial={{ opacity: 0, scale: 0.92, y: -8 }}
+              initial={{ opacity: 0, scale: 0.96, y: -8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+              exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               data-testid="github-update-available-banner"
               className="relative overflow-hidden rounded-3xl p-5 mt-4 text-white"
               style={{ background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 55%, #db2777 100%)" }}>
               <div className="flex flex-col sm:flex-row sm:items-center gap-4 relative z-10">
-                <motion.div animate={{ rotate: 360 }} transition={{ duration: 6, repeat: Infinity, ease: "linear" }}
-                  className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
                   <RefreshCw size={26} />
-                </motion.div>
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-lg font-black leading-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
                     Nueva versión disponible{ghResult.remote_version ? `: v${ghResult.remote_version}` : ""}
@@ -456,24 +453,20 @@ export default function UpdatesPage() {
           )}
           {(checkResult?.status === "latest" || checkResult?.status === "installed") && (
             <motion.div key="latest"
-              initial={{ opacity: 0, scale: 0.92, y: -8 }}
+              initial={{ opacity: 0, scale: 0.96, y: -8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+              exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               data-testid="up-to-date-banner"
               className="relative overflow-hidden rounded-3xl p-5 mt-4 text-white"
               style={{ background: "linear-gradient(135deg, #059669, #10b981 60%, #34d399)" }}>
-              <motion.div className="absolute -right-8 -top-8 w-44 h-44 rounded-full border-4 border-white/20"
-                animate={{ scale: [1, 1.35, 1], opacity: [0.5, 0.12, 0.5] }} transition={{ duration: 2.6, repeat: Infinity }} />
-              <motion.div className="absolute -right-2 -top-2 w-24 h-24 rounded-full border-4 border-white/25"
-                animate={{ scale: [1, 1.5, 1], opacity: [0.6, 0.15, 0.6] }} transition={{ duration: 2.6, repeat: Infinity, delay: 0.5 }} />
+              {/* anillos decorativos (quietos; antes latían sin parar) */}
+              <div className="absolute -right-8 -top-8 w-44 h-44 rounded-full border-4 border-white/20" style={{ opacity: 0.5 }} />
+              <div className="absolute -right-2 -top-2 w-24 h-24 rounded-full border-4 border-white/25" style={{ opacity: 0.6 }} />
               <div className="flex items-center gap-4 relative z-10">
-                <motion.div
-                  animate={{ rotate: [0, 8, -8, 0], scale: [1, 1.06, 1] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                  className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
                   <CheckCircle2 size={30} />
-                </motion.div>
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-lg sm:text-xl font-black leading-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
                     {checkResult.status === "installed" ? "¡Versión nueva instalada! 🎉" : "¡Ya tienes la versión más actual! ✓"}
@@ -492,29 +485,26 @@ export default function UpdatesPage() {
                         <span data-testid="updates-page-progress-percent" className="tabular-nums">{ghProgress.percent || 0}%</span>
                       </div>
                       <div className="h-2.5 w-full rounded-full bg-white/25 overflow-hidden">
-                        <motion.div
+                        <div
                           className="h-full rounded-full bg-white"
-                          initial={{ width: 0 }}
-                          animate={{ width: `${ghProgress.percent || 0}%` }}
-                          transition={{ ease: "easeOut", duration: 0.3 }}
+                          style={{ width: `${ghProgress.percent || 0}%` }}
                         />
                       </div>
                     </div>
                   )}
                 </div>
-                <motion.div animate={{ y: [0, -5, 0], rotate: [0, 12, 0] }} transition={{ duration: 1.8, repeat: Infinity }}
-                  className="hidden sm:block flex-shrink-0">
+                <div className="hidden sm:block flex-shrink-0">
                   <Sparkles size={26} className="text-white/70" />
-                </motion.div>
+                </div>
               </div>
             </motion.div>
           )}
           {checkResult?.status === "desktop_update" && (
             <motion.div key="desktop-update"
-              initial={{ opacity: 0, scale: 0.92, y: -8 }}
+              initial={{ opacity: 0, scale: 0.96, y: -8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+              exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               data-testid="desktop-update-banner"
               className="relative overflow-hidden rounded-3xl p-5 mt-4 text-white"
               style={{ background: "linear-gradient(135deg, #0ea5e9, #6366f1)" }}>
@@ -535,18 +525,17 @@ export default function UpdatesPage() {
           )}
           {checkResult?.status === "update" && (
             <motion.div key="update"
-              initial={{ opacity: 0, scale: 0.92, y: -8 }}
+              initial={{ opacity: 0, scale: 0.96, y: -8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              transition={{ type: "spring", stiffness: 260, damping: 20 }}
+              exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.15 } }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               data-testid="update-available-banner"
               className="relative overflow-hidden rounded-3xl p-5 mt-4 text-white"
               style={{ background: "linear-gradient(135deg, #4f46e5, #7c3aed)" }}>
               <div className="flex flex-col sm:flex-row sm:items-center gap-4 relative z-10">
-                <motion.div animate={{ rotate: 360 }} transition={{ duration: 6, repeat: Infinity, ease: "linear" }}
-                  className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                <div className="w-14 h-14 rounded-2xl bg-white/20 flex items-center justify-center flex-shrink-0">
                   <RefreshCw size={26} />
-                </motion.div>
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-lg font-black leading-tight" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
                     Nueva versión disponible: v{checkResult.remote_version}
@@ -568,7 +557,7 @@ export default function UpdatesPage() {
 
 
       {/* History */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1, duration: 0.25 }}
         className="glass rounded-3xl overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/30">
           <h2 className="text-sm font-black text-slate-700" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>
@@ -592,7 +581,7 @@ export default function UpdatesPage() {
         ) : (
           <div className="divide-y divide-white/20">
             {(showAllHistory ? history : history.slice(0, 5)).map((v, idx) => (
-              <motion.div key={v.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.04 }}
+              <motion.div key={v.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: Math.min(idx, 6) * 0.04, duration: 0.2 }}
                 className="flex items-center gap-4 px-6 py-4 hover:bg-white/20 transition-colors"
                 data-testid={`update-row-${v.id}`}>
 

@@ -32,8 +32,11 @@ const ROLE_COLORS  = {
   "Asistente":  "bg-slate-100/80 text-slate-700 border-slate-200/60",
 };
 const ORDER_KEY = "cp_socios_order";
-const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.07 } } };
-const item       = { hidden: { opacity: 0, y: 20, filter: "blur(4px)" }, show: { opacity: 1, y: 0, filter: "blur(0px)", transition: { duration: 0.4, ease: [0.22, 1, 0.36, 1] } } };
+// Entrada de tarjetas: solo opacidad + 12px (sin blur); el escalonado se limita a las 6 primeras
+const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2 } } };
+const item       = { hidden: { opacity: 0, y: 12 }, show: (i = 0) => ({ opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1], delay: Math.min(i, 6) * 0.04 } }) };
+const statsRow   = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } };
+const statCell   = { hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0, transition: { duration: 0.2 } } };
 
 function AssignEventPanel({ socio, reservations, formatCurrency, onAssigned, onClose }) {
   const [selectedRes, setSelectedRes] = useState("");
@@ -101,9 +104,9 @@ function AssignEventPanel({ socio, reservations, formatCurrency, onAssigned, onC
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: -8, height: 0 }}
-      animate={{ opacity: 1, y: 0, height: "auto" }}
-      exit={{ opacity: 0, y: -8, height: 0 }}
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0, transition: { duration: 0.2 } }}
+      exit={{ opacity: 0, y: -8, transition: { duration: 0.12 } }}
       className="mt-3 overflow-hidden"
       data-testid={`assign-panel-${socio.id}`}
     >
@@ -209,9 +212,9 @@ function AssignEventPanel({ socio, reservations, formatCurrency, onAssigned, onC
             <AnimatePresence>
               {selectedRes && (
                 <motion.div
-                  initial={{ opacity: 0, y: -6, height: 0 }}
-                  animate={{ opacity: 1, y: 0, height: "auto" }}
-                  exit={{ opacity: 0, y: -6, height: 0 }}
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0, transition: { duration: 0.2 } }}
+                  exit={{ opacity: 0, y: -6, transition: { duration: 0.12 } }}
                   className="overflow-hidden"
                 >
                   <div
@@ -390,9 +393,8 @@ export default function Socios() {
           {[...Array(3)].map((_, i) => <div key={i} className="h-52 glass rounded-3xl animate-pulse" />)}
         </div>
       ) : socios.length === 0 ? (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass rounded-3xl py-20 text-center">
-          <motion.div animate={{ y: [0, -8, 0] }} transition={{ repeat: Infinity, duration: 2.5, ease: "easeInOut" }}
-            className="w-16 h-16 rounded-3xl glass flex items-center justify-center mx-auto mb-4"><Users size={24} className="text-slate-300" /></motion.div>
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }} className="glass rounded-3xl py-20 text-center">
+          <div className="w-16 h-16 rounded-3xl glass flex items-center justify-center mx-auto mb-4"><Users size={24} className="text-slate-300" /></div>
           <p className="text-slate-500 font-medium">No hay socios registrados</p>
           <p className="text-slate-300 text-xs mt-1">Agrega fotógrafos y videógrafos</p>
         </motion.div>
@@ -409,7 +411,7 @@ export default function Socios() {
             const isExpanded = expandedId === socio.id;
             const isAssigning = assigningId === socio.id;
             return (
-              <motion.div key={socio.id} variants={item}
+              <motion.div key={socio.id} variants={item} custom={idx}
                 whileHover={{ y: -6, transition: { type: "spring", stiffness: 320, damping: 20 } }}
                 draggable onDragStart={e => handleDragStart(e, socio.id)} onDragOver={e => handleDragOver(e, socio.id)}
                 onDrop={e => handleDrop(e, socio.id)} onDragEnd={handleDragEnd}
@@ -432,16 +434,12 @@ export default function Socios() {
                     >
                       <motion.div className="relative" whileHover={{ scale: 1.08, rotate: -3 }} transition={{ type: "spring", stiffness: 400, damping: 15 }}>
                         {socio.photo && socio.photo_content_type
-                          ? <img src={`data:${socio.photo_content_type};base64,${socio.photo}`} alt={socio.name} className="w-13 h-13 w-[52px] h-[52px] rounded-2xl object-cover ring-2 ring-white/60 shadow-md" />
+                          ? <img src={`data:${socio.photo_content_type};base64,${socio.photo}`} alt={socio.name} loading="lazy" decoding="async" className="w-13 h-13 w-[52px] h-[52px] rounded-2xl object-cover ring-2 ring-white/60 shadow-md" />
                           : <div className="w-[52px] h-[52px] rounded-2xl btn-primary flex items-center justify-center ring-2 ring-white/60 shadow-md"><span className="text-xl font-black text-white">{socio.name?.charAt(0).toUpperCase()}</span></div>
                         }
-                        <motion.div
-                          className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white flex items-center justify-center shadow-sm"
-                          animate={{ scale: [1, 1.18, 1], rotate: [0, 6, -6, 0] }}
-                          transition={{ repeat: Infinity, duration: 3.5, ease: "easeInOut", delay: (idx % 5) * 0.3 }}
-                        >
+                        <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white flex items-center justify-center shadow-sm">
                           <RoleIcon size={11} className="text-slate-600" />
-                        </motion.div>
+                        </div>
                       </motion.div>
                       <div>
                         <p className="text-sm font-black text-slate-900 group-hover/profile:text-indigo-600 transition-colors">{socio.name}</p>
@@ -468,19 +466,19 @@ export default function Socios() {
 
                 {/* Stats row */}
                 <motion.div className="grid grid-cols-3 gap-2 mb-4"
-                  variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} initial="hidden" animate="show">
-                  <motion.div className="bg-white/30 rounded-2xl px-2 py-2 text-center" variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} whileHover={{ scale: 1.06 }}>
-                    <motion.p key={events.length} initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 500, damping: 15 }}
+                  variants={statsRow} initial="hidden" animate="show">
+                  <motion.div className="bg-white/30 rounded-2xl px-2 py-2 text-center" variants={statCell} whileHover={{ scale: 1.06 }}>
+                    <motion.p key={events.length} initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.2, ease: "easeOut" }}
                       className="text-lg font-black text-slate-900" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}>{events.length}</motion.p>
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Eventos</p>
                   </motion.div>
-                  <motion.div className="bg-emerald-50/60 rounded-2xl px-2 py-2 text-center" data-testid={`paid-${socio.id}`} variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} whileHover={{ scale: 1.06 }}>
+                  <motion.div className="bg-emerald-50/60 rounded-2xl px-2 py-2 text-center" data-testid={`paid-${socio.id}`} variants={statCell} whileHover={{ scale: 1.06 }}>
                     <p className="text-xs font-black text-emerald-600">{formatCurrency(paid)}</p>
-                    <div className="flex items-center justify-center gap-0.5 mt-0.5"><motion.span animate={{ scale: [1, 1.25, 1] }} transition={{ repeat: Infinity, duration: 2.4, ease: "easeInOut" }}><CheckCircle size={8} className="text-emerald-500" /></motion.span><p className="text-[9px] text-emerald-500 font-bold uppercase">Pagado</p></div>
+                    <div className="flex items-center justify-center gap-0.5 mt-0.5"><span><CheckCircle size={8} className="text-emerald-500" /></span><p className="text-[9px] text-emerald-500 font-bold uppercase">Pagado</p></div>
                   </motion.div>
-                  <motion.div className="bg-amber-50/60 rounded-2xl px-2 py-2 text-center" data-testid={`pending-${socio.id}`} variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }} whileHover={{ scale: 1.06 }}>
+                  <motion.div className="bg-amber-50/60 rounded-2xl px-2 py-2 text-center" data-testid={`pending-${socio.id}`} variants={statCell} whileHover={{ scale: 1.06 }}>
                     <p className="text-xs font-black text-amber-600">{formatCurrency(pending)}</p>
-                    <div className="flex items-center justify-center gap-0.5 mt-0.5"><motion.span animate={{ rotate: [0, 20, 0] }} transition={{ repeat: Infinity, duration: 2.8, ease: "easeInOut" }}><Clock size={8} className="text-amber-500" /></motion.span><p className="text-[9px] text-amber-500 font-bold uppercase">Pendiente</p></div>
+                    <div className="flex items-center justify-center gap-0.5 mt-0.5"><span><Clock size={8} className="text-amber-500" /></span><p className="text-[9px] text-amber-500 font-bold uppercase">Pendiente</p></div>
                   </motion.div>
                 </motion.div>
 
@@ -513,7 +511,7 @@ export default function Socios() {
                 {/* Events list (expandible) */}
                 <AnimatePresence>
                   {isExpanded && visibleEvents.length > 0 && (
-                    <motion.div key="events" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                    <motion.div key="events" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0, transition: { duration: 0.2 } }} exit={{ opacity: 0, transition: { duration: 0.12 } }}
                       className="space-y-2 overflow-hidden">
                       {visibleEvents.map(ev => {
                         const partnerInEv = (ev.assigned_partners || []).find(p => p.socio_id === socio.id);

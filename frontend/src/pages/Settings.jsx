@@ -19,7 +19,7 @@ import { SecuritySection } from "@/components/SecuritySection";
 import LicenseSection from "@/components/LicenseSection";
 import IncidentsPanel from "@/components/IncidentsPanel";
 
-const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } };
+const container = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { duration: 0.2, staggerChildren: 0.04 } } };
 
 function StatCard({ label, value }) {
   return (
@@ -718,15 +718,13 @@ export default function Settings() {
   return (
     <div className="px-6 py-8 max-w-7xl mx-auto">
      <div className="w-full">
-      <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }} className="mb-8">
+      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }} className="mb-8">
         <div className="flex items-center gap-3">
-          <motion.div
-            animate={{ rotate: [0, -8, 8, 0], scale: [1, 1.05, 1] }}
-            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+          <div
             className="w-12 h-12 rounded-2xl btn-primary flex items-center justify-center shadow-lg flex-shrink-0"
           >
             <Cog size={22} className="text-white" strokeWidth={2} />
-          </motion.div>
+          </div>
           <h1 className="text-5xl font-black gradient-text tracking-tight" style={{ fontFamily: 'Cabinet Grotesk, sans-serif' }}>{s.title}</h1>
         </div>
         <p className="text-sm text-slate-500 font-medium mt-1.5">{s.subtitle}</p>
@@ -764,10 +762,10 @@ export default function Settings() {
               return (
                 <motion.button
                   key={c.code}
-                  initial={{ opacity: 0, y: 16 }}
+                  initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: idx * 0.05, type: "spring", stiffness: 220, damping: 20 }}
-                  whileHover={{ y: -4, scale: 1.03 }}
+                  transition={{ delay: Math.min(idx, 6) * 0.04, duration: 0.2, ease: "easeOut" }}
+                  whileHover={{ y: -4, scale: 1.03, transition: { duration: 0.2 } }}
                   whileTap={{ scale: 0.96 }}
                   onClick={() => {
                     changeCurrency(c.code);
@@ -782,15 +780,13 @@ export default function Settings() {
                       layoutId="currency-active-glow"
                       className="absolute inset-0 pointer-events-none"
                       style={{ background: "radial-gradient(circle at 50% 20%, rgba(255,255,255,0.35), transparent 65%)" }}
-                      transition={{ type: "spring", damping: 24, stiffness: 260 }}
+                      transition={{ duration: 0.2, ease: "easeOut" }}
                     />
                   )}
 
-                  {/* Bandera animada */}
+                  {/* Bandera (quieta; se anima solo al pasar el ratón) */}
                   <motion.span
                     className="relative text-3xl leading-none flag-emoji"
-                    animate={active ? { rotate: [0, -8, 8, -4, 0], y: [0, -3, 0] } : { rotate: 0, y: 0 }}
-                    transition={active ? { duration: 2.4, repeat: Infinity, ease: "easeInOut" } : { duration: 0.3 }}
                     whileHover={{ scale: 1.25, rotate: [0, -12, 12, 0], transition: { duration: 0.5 } }}
                     style={{ filter: "drop-shadow(0 3px 6px rgba(0,0,0,0.18))" }}
                   >
@@ -799,13 +795,9 @@ export default function Settings() {
 
                   {/* Símbolo + código */}
                   <span className="relative flex items-baseline gap-1">
-                    <motion.span
-                      className="text-lg font-black"
-                      animate={active ? { scale: [1, 1.15, 1] } : { scale: 1 }}
-                      transition={active ? { duration: 1.8, repeat: Infinity, ease: "easeInOut" } : { duration: 0.2 }}
-                    >
+                    <span className="text-lg font-black">
                       {c.symbol}
-                    </motion.span>
+                    </span>
                     <span className="text-sm font-black tracking-wide">{c.code}</span>
                   </span>
 
@@ -818,10 +810,10 @@ export default function Settings() {
                   <AnimatePresence>
                     {active && (
                       <motion.span
-                        initial={{ scale: 0, rotate: -90, opacity: 0 }}
-                        animate={{ scale: 1, rotate: 0, opacity: 1 }}
-                        exit={{ scale: 0, opacity: 0 }}
-                        transition={{ type: "spring", stiffness: 300, damping: 16 }}
+                        initial={{ scale: 0.96, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
                         className="absolute top-2 right-2 w-5 h-5 rounded-full bg-white flex items-center justify-center shadow-md"
                       >
                         <CheckCircle2 size={14} className="text-emerald-500" strokeWidth={3} />
@@ -836,19 +828,15 @@ export default function Settings() {
           {/* Vista previa en vivo del formato de moneda */}
           <motion.div
             key={currency}
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
+            transition={{ duration: 0.2 }}
             className="mt-4 flex items-center justify-between gap-3 rounded-2xl px-4 py-3 glass border-white/60"
           >
             <div className="flex items-center gap-2.5">
-              <motion.span
-                animate={{ rotate: [0, -6, 6, 0] }}
-                transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
-                className="text-2xl leading-none flag-emoji"
-              >
+              <span className="text-2xl leading-none flag-emoji">
                 {(CURRENCIES.find(c => c.code === currency) || CURRENCIES[0]).flag}
-              </motion.span>
+              </span>
               <div>
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
                   {language === "es" ? "Vista previa" : "Preview"}
@@ -860,9 +848,9 @@ export default function Settings() {
             </div>
             <motion.span
               key={`prev-${currency}`}
-              initial={{ scale: 0.85, opacity: 0 }}
+              initial={{ scale: 0.96, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              transition={{ type: "spring", stiffness: 240, damping: 18 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
               className="text-xl font-black gradient-text"
               style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
             >
@@ -1104,7 +1092,7 @@ export default function Settings() {
 
                     <AnimatePresence>
                       {isOpen && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.12 } }} transition={{ duration: 0.2 }} className="overflow-hidden">
                           <div className="px-3.5 pb-3.5 space-y-3 border-t border-indigo-100/60 pt-3" data-testid="pc-channel-body">
                             {!desk?.supported ? (
                               <p className="text-[11px] text-slate-600 bg-slate-50 rounded-lg p-2.5">
@@ -1237,7 +1225,7 @@ export default function Settings() {
 
                     <AnimatePresence>
                       {isOpen && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.12 } }} transition={{ duration: 0.2 }} className="overflow-hidden">
                           <div className="px-3.5 pb-3.5 space-y-2.5 border-t border-blue-100/60 pt-3">
                             {/* Prominent Resend auto-login buttons */}
                             <div className="grid grid-cols-2 gap-2">
@@ -1377,7 +1365,7 @@ export default function Settings() {
 
                     <AnimatePresence>
                       {isOpen && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.12 } }} transition={{ duration: 0.2 }} className="overflow-hidden">
                           <div className="px-3.5 pb-3.5 space-y-2.5 border-t border-sky-100/60 pt-3">
                             <div className="grid grid-cols-2 gap-2">
                               <a href="https://t.me/BotFather" target="_blank" rel="noreferrer"
@@ -1475,7 +1463,7 @@ export default function Settings() {
 
                     <AnimatePresence>
                       {isOpen && (
-                        <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                        <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.12 } }} transition={{ duration: 0.2 }} className="overflow-hidden">
                           <div className="px-3.5 pb-3.5 space-y-2.5 border-t border-orange-100/60 pt-3">
                             <div className="grid grid-cols-2 gap-2">
                               <a href="https://ntfy.sh/app" target="_blank" rel="noreferrer"

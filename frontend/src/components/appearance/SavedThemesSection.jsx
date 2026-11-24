@@ -4,7 +4,7 @@ import {
   Bookmark, Save, Trash2, Play, RotateCcw, Cloud, CloudOff, Loader2,
   CheckCircle2, RefreshCw, Star, Github, Database, HardDrive,
 } from "lucide-react";
-import { useSettings } from "@/context/SettingsContext";
+import { useSettings, useAppearanceSync } from "@/context/SettingsContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   getSavedThemes, createSavedTheme, updateSavedTheme, deleteSavedTheme,
@@ -54,8 +54,9 @@ function ConfirmDialog({ pending, onCancel }) {
 export function SavedThemesSection() {
   const {
     language, getAppearanceSnapshot, applyAppearanceSnapshot,
-    resetAppearanceToDefault, appearanceSync,
+    resetAppearanceToDefault,
   } = useSettings();
+  const appearanceSync = useAppearanceSync();
   const { toast } = useToast();
   const es = language === "es";
 
@@ -359,10 +360,10 @@ export function SavedThemesSection() {
                 return (
                 <motion.div
                   key={t.id}
-                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ delay: idx * 0.07, type: "spring", stiffness: 200, damping: 22 }}
-                  whileHover={{ y: -6 }}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Math.min(idx, 6) * 0.04, duration: 0.22, ease: "easeOut" }}
+                  whileHover={{ y: -6, transition: { duration: 0.2 } }}
                   className={`theme-card snap-center shrink-0 w-[210px] rounded-3xl overflow-hidden border relative ${
                     t.is_default ? "border-amber-300" : "border-white/70"
                   }`}
@@ -371,7 +372,7 @@ export function SavedThemesSection() {
                   {/* Cabecera con gradiente del tema (glass 3D) */}
                   <div className="relative h-24 flex items-center justify-center" style={{ background: grad }}>
                     <div className="absolute inset-0 opacity-40" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.5), transparent 60%)" }} />
-                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center backdrop-blur-md bg-white/25 border border-white/40 relative">
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-white/25 border border-white/40 relative">
                       {t.is_default ? <Star size={22} className="text-white fill-white" /> : <CheckCircle2 size={22} className="text-white" />}
                     </div>
                     {t.is_default && (
@@ -381,7 +382,7 @@ export function SavedThemesSection() {
                     )}
                   </div>
                   {/* Cuerpo */}
-                  <div className="p-3 bg-white/85 backdrop-blur-xl">
+                  <div className="p-3 bg-white/85">
                     <p className="text-sm font-black text-slate-800 truncate">{t.name}</p>
                     <p className="text-[10px] text-slate-400 mb-2.5 truncate">
                       {t.updated_at && t.updated_at !== t.created_at

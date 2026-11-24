@@ -338,9 +338,8 @@ export function DesktopAppSection() {
                       </span>
                     </div>
                     <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                      <motion.div
-                        animate={{ width: `${progress}%` }}
-                        transition={{ duration: 0.5, ease: "easeOut" }}
+                      <div
+                        style={{ width: `${progress}%` }}
                         className={`h-full ${
                           isError ? "bg-gradient-to-r from-red-500 to-red-600" :
                           isDone ? "bg-gradient-to-r from-emerald-500 to-emerald-600" :
@@ -479,9 +478,9 @@ export function DesktopAppSection() {
                   <AnimatePresence>
                     {showInstallerHashInfo && (
                       <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, transition: { duration: 0.12 } }}
                         transition={{ duration: 0.2 }}
                         className="border-t border-indigo-200/70"
                       >
@@ -594,9 +593,9 @@ export function DesktopAppSection() {
                   <AnimatePresence>
                     {showHashInfo && (
                       <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, transition: { duration: 0.12 } }}
                         transition={{ duration: 0.2 }}
                         className="border-t border-slate-200/70"
                       >

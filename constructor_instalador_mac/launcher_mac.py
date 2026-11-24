@@ -117,12 +117,12 @@ def start_server(ui) -> None:
     proc = subprocess.Popen([sys.executable, "--server"], cwd=str(APP_DIR), stdout=log,
                             stderr=subprocess.STDOUT, start_new_session=True,
                             env={**os.environ, "CP_NO_BROWSER": "1", "CP_MANAGED_INSTALL": "1"})
-    for i in range(120):
+    # Rendimiento: revisar cada 0,1 s (antes 0,33 s + una pausa fija de 0,2 s al final)
+    for i in range(400):
         if port_open():
             url = base_url()
             opener = getattr(ui, "open", None)
             ui.status(100, "Abriendo Cinema Reservas…" if opener else "Abriendo en tu navegador…", url)
-            time.sleep(0.2)
             (opener or webbrowser.open)(url)
             ui.status(100, "Cinema Reservas esta corriendo", "Puedes cerrar esta ventana")
             ui.done()
@@ -138,8 +138,8 @@ def start_server(ui) -> None:
             else:
                 ui.failed("El servidor se cerro al iniciar", tail or "Revisa server_log.txt")
             return
-        ui.status(55 + i * 0.35, "", "esperando servidor (%ds)" % (i // 3 + 1))
-        time.sleep(0.33)
+        ui.status(55 + min(i * 0.1, 40), "", "esperando servidor (%ds)" % (i // 10 + 1))
+        time.sleep(0.1)
     ui.failed("El servidor no respondio", "Revisa server_log.txt (¿puerto %d ocupado?)" % PORT)
 
 

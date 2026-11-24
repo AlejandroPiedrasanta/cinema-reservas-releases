@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, memo } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { getCalendarEvents } from "@/lib/api";
@@ -25,6 +25,174 @@ const EVENT_HEX = {
 
 const YEAR_RANGE = 10;
 function getColor(type) { return EVENT_HEX[type] || EVENT_HEX["Otro"]; }
+const NO_EVENTS = [];
+const pad2 = (n) => String(n).padStart(2, "0");
+
+/**
+ * Cuadrícula del mes. Rendimiento: componente aparte y memorizado (pasar el ratón por un
+ * evento o abrir el buscador ya no vuelve a dibujar las 42 celdas) y hecho con elementos
+ * normales + CSS: cambiar de mes es instantáneo (antes: salida/entrada en cadena de 42
+ * celdas con animaciones de resorte y `layout` en cada evento ≈ 0,5 s) y no hay bucles
+ * infinitos por celda. Al cambiar de mes la cuadrícula entera hace un fundido de 150 ms.
+ */
+const MonthGrid = memo(function MonthGrid({ year, month, eventsByDate, nextEventId, daysToNext, es, onChipEnter, onChipLeave, onNewEvent, onOpenEvent }) {
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const isTodayDay = (day) => day === now.getDate() && month === now.getMonth() && year === now.getFullYear();
+
+  return (
+    <motion.div key={`grid-${month}-${year}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}
+      className="grid grid-cols-7 gap-1.5 p-2 sm:p-3" data-testid="calendar-grid">
+      {cells.map((day, i) => {
+        const dayEvents = day ? (eventsByDate.get(`${year}-${pad2(month + 1)}-${pad2(day)}`) || NO_EVENTS) : NO_EVENTS;
+        const visible = dayEvents.slice(0, 3);
+        const extra = dayEvents.length - visible.length;
+        const past = day ? new Date(year, month, day).getTime() < todayStart : false;
+        const todayCell = day && isTodayDay(day);
+        const hasEvents = dayEvents.length > 0;
+        const primaryType = hasEvents ? dayEvents[0].event_type : null;
+        const primaryColor = primaryType ? getColor(primaryType) : null;
+        const isWeekend = day && ((firstDay + day - 1) % 7 === 0 || (firstDay + day - 1) % 7 === 6);
+        const isNextEventDay = nextEventId != null && day && dayEvents.some(e => e.id === nextEventId);
+        const isSoonHighlight = isNextEventDay && daysToNext !== null && daysToNext <= 1;
+        const liftable = day && !past;
+
+        return (
+          <div
+            key={i}
+            className={`relative min-h-[112px] p-2 rounded-2xl border group/cell overflow-hidden transition-[transform,background-color,border-color,box-shadow] duration-200 ${
+              liftable ? "hover:-translate-y-[3px] hover:scale-[1.035]" : ""
+            } ${
+              !day ? "bg-transparent border-transparent" :
+              past ? "bg-slate-50/40 border-white/30" :
+              hasEvents ? "border-white/60" :
+              "bg-white/25 border-white/40 hover:bg-white/55 hover:border-white/80 hover:shadow-md"
+            } ${day ? "cursor-pointer" : ""}`}
+            style={hasEvents && !past ? {
+              background: `linear-gradient(135deg, ${primaryColor.fg}14, ${primaryColor.fg}05 60%, rgba(255,255,255,0.4))`,
+            } : hasEvents && past ? {
+              background: `linear-gradient(135deg, ${primaryColor.fg}0a, rgba(248,250,252,0.4))`,
+            } : undefined}
+            onClick={() => { if (day && dayEvents.length === 0) onNewEvent(); }}
+            data-testid={day ? `calendar-day-${day}` : undefined}
+          >
+            {/* Borde de color si tiene eventos (quieto; antes latía sin parar en cada celda) */}
+            {hasEvents && !past && (
+              <>
+                <div
+                  className="absolute inset-0 rounded-2xl pointer-events-none opacity-60"
+                  style={{ boxShadow: `inset 0 0 0 1.5px ${primaryColor.fg}55` }}
+                />
+                <div
+                  className="absolute -inset-0.5 rounded-2xl pointer-events-none opacity-0 group-hover/cell:opacity-100 transition-opacity duration-300"
+                  style={{ background: `radial-gradient(circle at 30% 20%, ${primaryColor.fg}30, transparent 65%)` }}
+                />
+                {/* Sparkle esquina */}
+                <div className="absolute top-1 right-1 pointer-events-none">
+                  <Sparkles size={9} style={{ color: primaryColor.fg }} strokeWidth={2.5} className="opacity-60" />
+                </div>
+              </>
+            )}
+
+            {/* Anillo especial "PRÓXIMO EVENTO" (por encima del ring today) */}
+            {isNextEventDay && !todayCell && (
+              <div
+                className="absolute inset-0 rounded-2xl pointer-events-none z-10"
+                style={{ boxShadow: `inset 0 0 0 2.5px ${primaryColor.fg}` }}
+              >
+                <div className="absolute inset-0 rounded-2xl" style={{ boxShadow: `0 0 0 3px ${primaryColor.fg}40`, opacity: 0.6 }} />
+              </div>
+            )}
+            {isSoonHighlight && (
+              <div className="absolute -top-1 -right-1 z-20 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-red-500 to-orange-500 shadow-md">
+                <Flame size={9} className="text-white" strokeWidth={2.6} />
+              </div>
+            )}
+
+            {/* Anillo TODAY */}
+            {todayCell && (
+              <div
+                className="absolute inset-0 rounded-2xl pointer-events-none z-10"
+                style={{ boxShadow: "inset 0 0 0 2.5px var(--t-from)" }}
+              >
+                <div className="absolute inset-0 rounded-2xl" style={{ boxShadow: "0 0 0 3px var(--t-from)33", opacity: 0.7 }} />
+              </div>
+            )}
+
+            {day && (
+              <div className="relative z-[1]">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span
+                    className={`inline-flex items-center justify-center min-w-[28px] h-7 px-1.5 text-sm rounded-xl font-black transition-all hover:scale-[1.15] ${
+                      todayCell ? "theme-today shadow-md" :
+                      past ? "text-slate-300" :
+                      hasEvents ? "text-slate-800 group-hover/cell:bg-white/80" :
+                      isWeekend ? "text-slate-500 group-hover/cell:bg-white/80" :
+                      "text-slate-700 group-hover/cell:bg-white/80"
+                    }`}
+                    style={hasEvents && !todayCell && !past ? { color: primaryColor.fg } : undefined}
+                  >
+                    {day}
+                  </span>
+                  {hasEvents ? (
+                    <span
+                      className="text-[9px] font-black px-1.5 py-0.5 rounded-full text-white shadow-sm flex-shrink-0 transition-transform duration-200 hover:scale-[1.2] hover:rotate-[5deg]"
+                      style={{ background: primaryColor.fg }}
+                    >
+                      {dayEvents.length}
+                    </span>
+                  ) : (
+                    !past && (
+                      <span className="opacity-0 group-hover/cell:opacity-100 transition-[opacity,transform] duration-200 hover:scale-[1.3] hover:rotate-90">
+                        <div className="w-5 h-5 rounded-full bg-white/70 flex items-center justify-center shadow-sm">
+                          <Plus size={11} className="text-slate-500" strokeWidth={2.5} />
+                        </div>
+                      </span>
+                    )
+                  )}
+                </div>
+                <div className="space-y-1">
+                  {visible.map((ev) => {
+                    const c = getColor(ev.event_type);
+                    const cfg = getEventConfig(ev.event_type);
+                    const EvIcon = cfg.icon;
+                    return (
+                      <div
+                        key={ev.id}
+                        onClick={(e) => { e.stopPropagation(); onOpenEvent(ev.id); }}
+                        onMouseEnter={(e) => onChipEnter(ev, e)}
+                        onMouseLeave={onChipLeave}
+                        style={{ borderLeftColor: c.fg, background: `linear-gradient(90deg, ${c.bg}, ${c.bg}cc)`, "--chip-shadow": `0 4px 14px ${c.fg}44` }}
+                        className="flex items-center gap-1 pl-1.5 pr-1.5 py-1 rounded-lg border-l-[3px] cursor-pointer shadow-sm transition-[transform,box-shadow] duration-200 hover:scale-[1.06] hover:translate-x-[3px] hover:[box-shadow:var(--chip-shadow)] active:scale-[0.96]"
+                        data-testid={`calendar-event-${ev.id}`}
+                      >
+                        <EvIcon size={10} style={{ color: c.fg }} strokeWidth={2.3} className="flex-shrink-0" />
+                        <span className="text-[10px] font-black truncate leading-tight" style={{ color: c.fg }}>
+                          {ev.event_time ? `${ev.event_time} ` : ""}{ev.event_type || ev.client_name}
+                        </span>
+                      </div>
+                    );
+                  })}
+                  {extra > 0 && (
+                    <span
+                      className="text-[10px] font-black pl-1 block cursor-pointer transition-transform duration-200 hover:scale-[1.08] hover:translate-x-[2px]"
+                      style={{ color: primaryColor?.fg || "#94a3b8" }}
+                    >
+                      + {extra} {es ? "más" : "more"}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </motion.div>
+  );
+});
 
 export default function CalendarView() {
   const [events, setEvents] = useState([]);
@@ -42,19 +210,19 @@ export default function CalendarView() {
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
-  const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const cells = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
 
-  const getEventsForDay = useCallback((day) => {
-    if (!day) return [];
-    const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    return events.filter(e => e.event_date === dateStr);
-  }, [events, year, month]);
+  // Eventos agrupados por fecha una sola vez (antes se filtraba la lista entera por cada celda)
+  const eventsByDate = useMemo(() => {
+    const m = new Map();
+    for (const e of events) {
+      if (!e.event_date) continue;
+      const arr = m.get(e.event_date);
+      if (arr) arr.push(e); else m.set(e.event_date, [e]);
+    }
+    return m;
+  }, [events]);
 
   const today = new Date();
-  const isToday = (day) => day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
-  const isPast = (day) => { const d = new Date(year, month, day); d.setHours(0,0,0,0); const t = new Date(); t.setHours(0,0,0,0); return d < t; };
 
   const goTo = (y, m, dir) => { setDirection(dir); setCurrentDate(new Date(y, m, 1)); };
   const prev = () => month === 0 ? goTo(year - 1, 11, -1) : goTo(year, month - 1, -1);
@@ -87,15 +255,14 @@ export default function CalendarView() {
     }
   }, [nextEvent?.id, nextEvent?.event_date, daysToNext, year, month]);
 
-  const onChipEnter = (ev, e) => {
+  // Callbacks estables: la cuadrícula memorizada no se vuelve a dibujar al pasar el ratón
+  const onChipEnter = useCallback((ev, e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     setHover({ ev, rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height } });
-  };
-  const onChipMove = () => {};
-  const onChipLeave = () => setHover(null);
-
-  const gridVariants = { hidden: {}, show: { transition: { staggerChildren: 0.012 } } };
-  const cellVariant = { hidden: { opacity: 0, scale: 0.9 }, show: { opacity: 1, scale: 1, transition: { duration: 0.25 } } };
+  }, []);
+  const onChipLeave = useCallback(() => setHover(null), []);
+  const openNewEvent = useCallback(() => setShowForm(true), []);
+  const openEvent = useCallback((id) => navigate(`/reservaciones/${id}`), [navigate]);
 
   return (
     <div className="px-6 py-8 max-w-7xl mx-auto">
@@ -137,10 +304,10 @@ export default function CalendarView() {
           const isToday = daysToNext === 0;
           return (
             <motion.div
-              initial={{ opacity: 0, y: -20, scale: 0.96 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: -20 }}
-              transition={{ type: "spring", stiffness: 260, damping: 22 }}
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8, transition: { duration: 0.12 } }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
               className="mb-4 rounded-2xl overflow-hidden shadow-lg cursor-pointer relative"
               onClick={() => navigate(`/reservaciones/${nextEvent.id}`)}
               data-testid="urgent-event-notification"
@@ -150,20 +317,11 @@ export default function CalendarView() {
                   : "linear-gradient(90deg,#f97316,#f59e0b)",
               }}
             >
-              <motion.div
-                className="absolute inset-0"
-                style={{ background: "rgba(255,255,255,0.18)" }}
-                animate={{ opacity: [0, 0.6, 0] }}
-                transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-              />
               <div className="relative flex items-center gap-3 px-5 py-3 text-white">
-                <motion.div
-                  animate={{ rotate: [0, -12, 12, 0], scale: [1, 1.15, 1] }}
-                  transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut" }}
-                  className="w-10 h-10 rounded-xl bg-white/25 flex items-center justify-center flex-shrink-0 backdrop-blur-sm"
-                >
-                  <Bell size={18} strokeWidth={2.5} />
-                </motion.div>
+                {/* campana: aviso real → solo un parpadeo suave de opacidad si es HOY */}
+                <div className="w-10 h-10 rounded-xl bg-white/25 flex items-center justify-center flex-shrink-0">
+                  <Bell size={18} strokeWidth={2.5} className={isToday ? "animate-pulse" : ""} />
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-[10px] font-black uppercase tracking-widest text-white/90 leading-none mb-1">
                     {isToday ? (es ? "¡Atención! Evento HOY" : "Heads up! Event TODAY") : (es ? "¡Prepárate! Evento mañana" : "Get ready! Event tomorrow")}
@@ -173,7 +331,7 @@ export default function CalendarView() {
                     {nextEvent.event_time ? ` · ${nextEvent.event_time}` : ""}
                   </p>
                 </div>
-                <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/25 backdrop-blur-sm text-[11px] font-black flex-shrink-0">
+                <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/25 text-[11px] font-black flex-shrink-0">
                   <GIcon size={12} strokeWidth={2.4} />
                   {nextEvent.venue || fmtDate(nextEvent.event_date)}
                 </div>
@@ -198,9 +356,9 @@ export default function CalendarView() {
         };
         return (
           <motion.div
-            initial={{ opacity: 0, y: -14, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ type: "spring", stiffness: 180, damping: 20 }}
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
             className="relative mb-6 rounded-[28px] overflow-hidden cursor-pointer group"
             onClick={() => navigate(`/reservaciones/${nextEvent.id}`)}
             data-testid="next-event-banner"
@@ -212,43 +370,31 @@ export default function CalendarView() {
                 background: `linear-gradient(120deg, ${c.fg}18 0%, ${c.fg}08 45%, rgba(255,255,255,0.6) 100%)`,
               }}
             />
-            {/* Ondas animadas */}
-            <motion.div
+            {/* Ondas (quietas, a su opacidad media) */}
+            <div
               className="absolute -top-20 -right-20 w-64 h-64 rounded-full pointer-events-none"
-              style={{ background: `radial-gradient(circle, ${c.fg}30, transparent 70%)` }}
-              animate={{ scale: [1, 1.15, 1], opacity: [0.55, 0.85, 0.55] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+              style={{ background: `radial-gradient(circle, ${c.fg}30, transparent 70%)`, opacity: 0.7 }}
             />
-            <motion.div
+            <div
               className="absolute -bottom-24 -left-16 w-72 h-72 rounded-full pointer-events-none"
-              style={{ background: `radial-gradient(circle, ${c.fg}22, transparent 70%)` }}
-              animate={{ scale: [1.1, 1, 1.1], opacity: [0.4, 0.7, 0.4] }}
-              transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
+              style={{ background: `radial-gradient(circle, ${c.fg}22, transparent 70%)`, opacity: 0.55, transform: "scale(1.05)" }}
             />
 
             <div className="relative glass rounded-[28px] border-white/60 shadow-lg group-hover:shadow-2xl transition-shadow duration-500 px-6 py-5 sm:px-8 sm:py-6">
               <div className="flex flex-col xl:flex-row items-start xl:items-center gap-5 xl:gap-8">
                 {/* Icono + Estado */}
                 <div className="flex items-center gap-4 flex-shrink-0">
-                  <motion.div
-                    animate={isSoon
-                      ? { scale: [1, 1.08, 1], rotate: [0, -6, 6, 0] }
-                      : { rotate: [0, -4, 4, 0] }}
-                    transition={{ duration: isSoon ? 1.4 : 3.5, repeat: Infinity, ease: "easeInOut" }}
+                  <div
                     className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-3xl flex items-center justify-center shadow-xl flex-shrink-0"
                     style={{ background: `linear-gradient(135deg, ${c.fg}, ${c.fg}dd)` }}
                   >
                     <NIcon size={30} className="text-white" strokeWidth={2} />
                     {isSoon && (
-                      <motion.div
-                        className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-red-500 flex items-center justify-center shadow-md ring-2 ring-white"
-                        animate={{ scale: [1, 1.2, 1] }}
-                        transition={{ duration: 0.9, repeat: Infinity }}
-                      >
+                      <div className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-red-500 flex items-center justify-center shadow-md ring-2 ring-white">
                         <Bell size={11} className="text-white" strokeWidth={2.6} />
-                      </motion.div>
+                      </div>
                     )}
-                  </motion.div>
+                  </div>
 
                   <div className="min-w-0">
                     <motion.p
@@ -287,9 +433,7 @@ export default function CalendarView() {
                     )}
                   </div>
 
-                  <motion.div
-                    animate={isSoon ? { scale: [1, 1.06, 1] } : {}}
-                    transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+                  <div
                     className="relative flex flex-col items-center px-5 py-3 rounded-2xl shadow-md min-w-[110px]"
                     style={{
                       background: isToday
@@ -299,36 +443,25 @@ export default function CalendarView() {
                           : `linear-gradient(135deg, ${c.fg}, ${c.fg}cc)`,
                     }}
                   >
-                    {isSoon && (
-                      <motion.span
-                        className="absolute inset-0 rounded-2xl"
-                        style={{ background: "rgba(255,255,255,0.25)" }}
-                        animate={{ opacity: [0, 0.5, 0] }}
-                        transition={{ duration: 1.4, repeat: Infinity }}
-                      />
-                    )}
                     <span className="relative text-[10px] font-black text-white/90 uppercase tracking-widest">
                       {es ? "Faltan" : "In"}
                     </span>
-                    <AnimatePresence mode="wait">
-                      <motion.span
-                        key={daysToNext}
-                        initial={{ y: 10, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        exit={{ y: -10, opacity: 0 }}
-                        transition={{ duration: 0.3 }}
-                        className="relative text-3xl font-black text-white leading-none mt-0.5"
-                        style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
-                      >
-                        {isToday ? (es ? "¡Hoy!" : "Today!") : daysToNext}
-                      </motion.span>
-                    </AnimatePresence>
+                    <motion.span
+                      key={daysToNext}
+                      initial={{ y: 6, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      transition={{ duration: 0.2 }}
+                      className="relative text-3xl font-black text-white leading-none mt-0.5"
+                      style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
+                    >
+                      {isToday ? (es ? "¡Hoy!" : "Today!") : daysToNext}
+                    </motion.span>
                     {!isToday && (
                       <span className="relative text-[11px] font-black text-white/95 mt-0.5">
                         {daysToNext === 1 ? (es ? "día" : "day") : (es ? "días" : "days")}
                       </span>
                     )}
-                  </motion.div>
+                  </div>
 
                   <motion.button
                     whileHover={{ scale: 1.06, x: 2 }}
@@ -398,7 +531,7 @@ export default function CalendarView() {
       {/* Search bar */}
       <AnimatePresence>
         {showSearch && viewMode === "month" && (
-          <motion.div initial={{ opacity: 0, height: 0, marginBottom: 0 }} animate={{ opacity: 1, height: "auto", marginBottom: 16 }} exit={{ opacity: 0, height: 0, marginBottom: 0 }} transition={{ duration: 0.3 }} className="overflow-hidden">
+          <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6, transition: { duration: 0.12 } }} transition={{ duration: 0.18 }} className="overflow-hidden mb-4">
             <div className="glass rounded-2xl px-5 py-4 flex items-center gap-4 flex-wrap">
               <Search size={15} className="text-slate-400 shrink-0" />
               <div className="flex items-center gap-3 flex-wrap flex-1">
@@ -426,17 +559,16 @@ export default function CalendarView() {
 
       {/* ══ MONTH VIEW ══ */}
       {viewMode === "month" && (
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.1 }} className="glass rounded-3xl overflow-hidden">
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.22 }} className="glass rounded-3xl overflow-hidden">
           {/* Nav header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-white/30">
             <motion.button whileHover={{ scale: 1.1, x: -2 }} whileTap={{ scale: 0.9 }} onClick={prev} className="p-2.5 rounded-2xl glass hover:bg-white/50 text-slate-600 transition-colors" data-testid="prev-month-btn">
               <ChevronLeft size={16} />
             </motion.button>
-            <AnimatePresence mode="wait">
-              <motion.h2 key={`${month}-${year}`} initial={{ opacity: 0, y: direction * 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: direction * -8 }} transition={{ duration: 0.22 }}
-                className="text-xl font-black text-slate-900 cursor-pointer select-none hover:opacity-70 transition-opacity" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
-                onClick={() => setShowSearch(s => !s)} data-testid="calendar-month-title">{tr.months[month]} {year}</motion.h2>
-            </AnimatePresence>
+            {/* el título nuevo entra al instante con un fundido corto (sin esperar a que salga el anterior) */}
+            <motion.h2 key={`${month}-${year}`} initial={{ opacity: 0, y: direction * 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.15 }}
+              className="text-xl font-black text-slate-900 cursor-pointer select-none hover:opacity-70 transition-opacity" style={{ fontFamily: "Cabinet Grotesk, sans-serif" }}
+              onClick={() => setShowSearch(s => !s)} data-testid="calendar-month-title">{tr.months[month]} {year}</motion.h2>
             <motion.button whileHover={{ scale: 1.1, x: 2 }} whileTap={{ scale: 0.9 }} onClick={next} className="p-2.5 rounded-2xl glass hover:bg-white/50 text-slate-600 transition-colors" data-testid="next-month-btn">
               <ChevronRight size={16} />
             </motion.button>
@@ -447,209 +579,16 @@ export default function CalendarView() {
             {tr.days.map(d => <div key={d} className="py-2.5 text-center text-[11px] font-black text-slate-500 uppercase tracking-widest">{d}</div>)}
           </div>
 
-          {/* Day cells with directional slide */}
-          <AnimatePresence mode="wait" custom={direction}>
-            <motion.div key={`grid-${month}-${year}`} custom={direction} variants={gridVariants} initial="hidden" animate="show"
-              exit={{ opacity: 0, x: direction * -24, transition: { duration: 0.18 } }} className="grid grid-cols-7 gap-1.5 p-2 sm:p-3" data-testid="calendar-grid">
-              {cells.map((day, i) => {
-                const dayEvents = getEventsForDay(day);
-                const visible = dayEvents.slice(0, 3);
-                const extra = dayEvents.length - visible.length;
-                const past = day ? isPast(day) : false;
-                const todayCell = day && isToday(day);
-                const hasEvents = dayEvents.length > 0;
-                const primaryType = hasEvents ? dayEvents[0].event_type : null;
-                const primaryColor = primaryType ? getColor(primaryType) : null;
-                const isWeekend = day && ((firstDay + day - 1) % 7 === 0 || (firstDay + day - 1) % 7 === 6);
-                const isNextEventDay = nextEvent && day && dayEvents.some(e => e.id === nextEvent.id);
-                const isSoonHighlight = isNextEventDay && daysToNext !== null && daysToNext <= 1;
-
-                return (
-                  <motion.div
-                    key={i}
-                    variants={cellVariant}
-                    whileHover={day && !past ? { scale: 1.035, y: -3, transition: { type: "spring", stiffness: 300, damping: 20 } } : {}}
-                    className={`relative min-h-[112px] p-2 rounded-2xl border transition-colors group/cell overflow-hidden ${
-                      !day ? "bg-transparent border-transparent" :
-                      past ? "bg-slate-50/40 border-white/30" :
-                      hasEvents ? "border-white/60" :
-                      "bg-white/25 border-white/40 hover:bg-white/55 hover:border-white/80 hover:shadow-md"
-                    } ${day ? "cursor-pointer" : ""}`}
-                    style={hasEvents && !past ? {
-                      background: `linear-gradient(135deg, ${primaryColor.fg}14, ${primaryColor.fg}05 60%, rgba(255,255,255,0.4))`,
-                    } : hasEvents && past ? {
-                      background: `linear-gradient(135deg, ${primaryColor.fg}0a, rgba(248,250,252,0.4))`,
-                    } : undefined}
-                    onClick={() => { if (day && dayEvents.length === 0) setShowForm(true); }}
-                    data-testid={day ? `calendar-day-${day}` : undefined}
-                  >
-                    {/* Glow animado si tiene eventos (no en pasado) */}
-                    {hasEvents && !past && (
-                      <>
-                        <motion.div
-                          className="absolute inset-0 rounded-2xl pointer-events-none opacity-60"
-                          style={{
-                            boxShadow: `inset 0 0 0 1.5px ${primaryColor.fg}55`,
-                          }}
-                          animate={{ opacity: [0.4, 0.85, 0.4] }}
-                          transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut", delay: (i % 7) * 0.15 }}
-                        />
-                        <motion.div
-                          className="absolute -inset-0.5 rounded-2xl pointer-events-none opacity-0 group-hover/cell:opacity-100 transition-opacity duration-300"
-                          style={{
-                            background: `radial-gradient(circle at 30% 20%, ${primaryColor.fg}30, transparent 65%)`,
-                          }}
-                        />
-                        {/* Sparkle esquina */}
-                        <motion.div
-                          className="absolute top-1 right-1 pointer-events-none"
-                          animate={{ scale: [1, 1.25, 1], rotate: [0, 12, 0] }}
-                          transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut", delay: (i % 5) * 0.3 }}
-                        >
-                          <Sparkles size={9} style={{ color: primaryColor.fg }} strokeWidth={2.5} className="opacity-60" />
-                        </motion.div>
-                      </>
-                    )}
-
-                    {/* Anillo especial "PRÓXIMO EVENTO" (por encima del ring today) */}
-                    {isNextEventDay && !todayCell && (
-                      <motion.div
-                        className="absolute inset-0 rounded-2xl pointer-events-none z-10"
-                        style={{ boxShadow: `inset 0 0 0 2.5px ${primaryColor.fg}` }}
-                      >
-                        <motion.div
-                          className="absolute inset-0 rounded-2xl"
-                          style={{ boxShadow: `0 0 0 3px ${primaryColor.fg}40` }}
-                          animate={{ opacity: [0.3, 0.9, 0.3], scale: [1, 1.02, 1] }}
-                          transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-                        />
-                      </motion.div>
-                    )}
-                    {isSoonHighlight && (
-                      <motion.div
-                        className="absolute -top-1 -right-1 z-20 flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-gradient-to-r from-red-500 to-orange-500 shadow-md"
-                        initial={{ scale: 0 }}
-                        animate={{ scale: [1, 1.12, 1] }}
-                        transition={{ duration: 1, repeat: Infinity }}
-                      >
-                        <Flame size={9} className="text-white" strokeWidth={2.6} />
-                      </motion.div>
-                    )}
-
-                    {/* Anillo TODAY */}
-                    {todayCell && (
-                      <motion.div
-                        layoutId="today-ring"
-                        className="absolute inset-0 rounded-2xl pointer-events-none z-10"
-                        style={{ boxShadow: "inset 0 0 0 2.5px var(--t-from)" }}
-                      >
-                        <motion.div
-                          className="absolute inset-0 rounded-2xl"
-                          style={{ boxShadow: "0 0 0 3px var(--t-from)33" }}
-                          animate={{ opacity: [0.4, 1, 0.4] }}
-                          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
-                        />
-                      </motion.div>
-                    )}
-
-                    {day && (
-                      <div className="relative z-[1]">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <motion.span
-                            whileHover={{ scale: 1.15 }}
-                            className={`inline-flex items-center justify-center min-w-[28px] h-7 px-1.5 text-sm rounded-xl font-black transition-all ${
-                              todayCell ? "theme-today shadow-md" :
-                              past ? "text-slate-300" :
-                              hasEvents ? "text-slate-800 group-hover/cell:bg-white/80" :
-                              isWeekend ? "text-slate-500 group-hover/cell:bg-white/80" :
-                              "text-slate-700 group-hover/cell:bg-white/80"
-                            }`}
-                            style={hasEvents && !todayCell && !past ? { color: primaryColor.fg } : undefined}
-                          >
-                            {day}
-                          </motion.span>
-                          {hasEvents ? (
-                            <motion.span
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              transition={{ type: "spring", stiffness: 280, delay: 0.1 + (i % 7) * 0.02 }}
-                              whileHover={{ scale: 1.2, rotate: 5 }}
-                              className="text-[9px] font-black px-1.5 py-0.5 rounded-full text-white shadow-sm flex-shrink-0"
-                              style={{ background: primaryColor.fg }}
-                            >
-                              {dayEvents.length}
-                            </motion.span>
-                          ) : (
-                            !past && (
-                              <motion.span
-                                whileHover={{ scale: 1.3, rotate: 90 }}
-                                className="opacity-0 group-hover/cell:opacity-100 transition-opacity"
-                              >
-                                <div className="w-5 h-5 rounded-full bg-white/70 flex items-center justify-center shadow-sm">
-                                  <Plus size={11} className="text-slate-500" strokeWidth={2.5} />
-                                </div>
-                              </motion.span>
-                            )
-                          )}
-                        </div>
-                        <div className="space-y-1">
-                          <AnimatePresence>
-                            {visible.map((ev, evIdx) => {
-                              const c = getColor(ev.event_type);
-                              const cfg = getEventConfig(ev.event_type);
-                              const EvIcon = cfg.icon;
-                              return (
-                                <motion.div
-                                  key={ev.id}
-                                  layout
-                                  initial={{ opacity: 0, x: -8, scale: 0.9 }}
-                                  animate={{ opacity: 1, x: 0, scale: 1 }}
-                                  exit={{ opacity: 0, scale: 0.9 }}
-                                  transition={{ delay: 0.1 + evIdx * 0.05, type: "spring", stiffness: 260 }}
-                                  whileHover={{ scale: 1.06, x: 3, boxShadow: `0 4px 14px ${c.fg}44` }}
-                                  whileTap={{ scale: 0.96 }}
-                                  onClick={(e) => { e.stopPropagation(); navigate(`/reservaciones/${ev.id}`); }}
-                                  onMouseEnter={(e) => onChipEnter(ev, e)}
-                                  onMouseMove={onChipMove}
-                                  onMouseLeave={onChipLeave}
-                                  style={{ borderLeftColor: c.fg, background: `linear-gradient(90deg, ${c.bg}, ${c.bg}cc)` }}
-                                  className="flex items-center gap-1 pl-1.5 pr-1.5 py-1 rounded-lg border-l-[3px] cursor-pointer shadow-sm hover:shadow-md transition-shadow"
-                                  data-testid={`calendar-event-${ev.id}`}
-                                >
-                                  <EvIcon size={10} style={{ color: c.fg }} strokeWidth={2.3} className="flex-shrink-0" />
-                                  <span className="text-[10px] font-black truncate leading-tight" style={{ color: c.fg }}>
-                                    {ev.event_time ? `${ev.event_time} ` : ""}{ev.event_type || ev.client_name}
-                                  </span>
-                                </motion.div>
-                              );
-                            })}
-                          </AnimatePresence>
-                          {extra > 0 && (
-                            <motion.span
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ delay: 0.25 }}
-                              whileHover={{ scale: 1.08, x: 2 }}
-                              className="text-[10px] font-black pl-1 block cursor-pointer"
-                              style={{ color: primaryColor?.fg || "#94a3b8" }}
-                            >
-                              + {extra} {es ? "más" : "more"}
-                            </motion.span>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </motion.div>
-                );
-              })}
-            </motion.div>
-          </AnimatePresence>
+          {/* Day cells: cuadrícula memorizada, cambio de mes instantáneo (fundido de 150 ms) */}
+          <MonthGrid year={year} month={month} eventsByDate={eventsByDate}
+            nextEventId={nextEvent ? nextEvent.id : null} daysToNext={daysToNext} es={es}
+            onChipEnter={onChipEnter} onChipLeave={onChipLeave} onNewEvent={openNewEvent} onOpenEvent={openEvent} />
         </motion.div>
       )}
 
       {/* ══ LIST VIEW (unified reservations table) ══ */}
       {viewMode === "list" && (
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} data-testid="calendar-list-view">
+        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} data-testid="calendar-list-view">
           <Reservations embedded />
         </motion.div>
       )}
@@ -685,7 +624,7 @@ export default function CalendarView() {
           return (
             <motion.div initial={{ opacity: 0, scale: 0.94, x: -6 }} animate={{ opacity: 1, scale: 1, x: 0 }} exit={{ opacity: 0, scale: 0.94 }} transition={{ duration: 0.14 }}
               className="fixed z-[9999] w-72 rounded-2xl p-4 pointer-events-none shadow-2xl border"
-              style={{ left, top, background: "rgba(255,255,255,0.94)", backdropFilter: "blur(16px)", borderColor: c.border }} data-testid="calendar-hover-preview">
+              style={{ left, top, background: "rgba(255,255,255,0.96)", borderColor: c.border }} data-testid="calendar-hover-preview">
               <div className="flex items-center gap-2.5 mb-2.5">
                 <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: c.fg + "18" }}>
                   <HIcon size={16} style={{ color: c.fg }} strokeWidth={2} />

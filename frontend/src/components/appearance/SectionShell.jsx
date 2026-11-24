@@ -1,18 +1,18 @@
 import { useContext, useMemo, useState, useRef } from "react";
-import { motion, AnimatePresence, useMotionValue, useSpring, useTransform } from "framer-motion";
-import { ChevronDown, Search, X, Sparkles } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { ChevronDown, Search, X } from "lucide-react";
 import { SectionSearchContext, matchesSearch, extractText, normalizeText } from "@/lib/sectionSearch";
 
 /* ─────────────────────────────────────────────────────────────────────
-   NUEVO DISEÑO: CARD PANELS con animación
+   NUEVO DISEÑO: CARD PANELS
    Cada Section es una tarjeta con:
      · Gradiente propio (auto-asignado por hash del título)
-     · Icono orbital flotante
-     · Blobs ambientales animados
-     · Tilt 3D en hover (parallax con el mouse)
-     · Shine sweep al pasar el cursor
-     · Sparkles decorativos
-     · Apertura con spring elástico
+     · Icono con halo de color
+     · Blobs ambientales (quietos)
+     · Apertura con fundido corto
+   Rendimiento: antes cada tarjeta tenía 2 blobs con blur(64px) moviéndose sin parar,
+   destellos infinitos, un barrido de luz y un tilt 3D que seguía al ratón; con ~15
+   tarjetas por página eso redibujaba la pantalla en cada frame. Ahora todo es estático.
    ───────────────────────────────────────────────────────────────────── */
 
 // Paletas de tarjeta — degradados suaves, sin morados oscuros absolutos
@@ -35,54 +35,18 @@ function hashPalette(seed = "") {
   return PALETTES[h % PALETTES.length];
 }
 
-// Sparkles decorativos
-function FloatingSparkles({ color }) {
-  const items = useMemo(() => (
-    Array.from({ length: 5 }).map((_, i) => ({
-      id: i,
-      x: 10 + Math.random() * 80,
-      y: 10 + Math.random() * 80,
-      delay: Math.random() * 2,
-      duration: 2 + Math.random() * 2,
-      size: 8 + Math.random() * 6,
-    }))
-  ), []);
-  return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden">
-      {items.map(s => (
-        <motion.div
-          key={s.id}
-          className="absolute"
-          style={{ left: `${s.x}%`, top: `${s.y}%` }}
-          animate={{
-            opacity: [0, 1, 0],
-            scale: [0.5, 1.2, 0.5],
-            rotate: [0, 180, 360],
-          }}
-          transition={{ duration: s.duration, delay: s.delay, repeat: Infinity, ease: "easeInOut" }}
-        >
-          <Sparkles size={s.size} style={{ color }} />
-        </motion.div>
-      ))}
-    </div>
-  );
-}
-
-// Blobs ambientales flotando dentro de la card
+// Blobs ambientales dentro de la card: quietos y con el difuminado "horneado" en un
+// degradado radial (antes: blur-3xl = filter: blur(64px) animado en cada tarjeta).
 function AmbientBlobs({ from, to }) {
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-[2rem]">
-      <motion.div
-        className="absolute -top-20 -right-20 w-64 h-64 rounded-full opacity-40 blur-3xl"
-        style={{ background: from }}
-        animate={{ x: [0, 30, -20, 0], y: [0, -20, 30, 0], scale: [1, 1.15, 0.9, 1] }}
-        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
+      <div
+        className="absolute -top-20 -right-20 w-64 h-64 rounded-full opacity-40"
+        style={{ background: `radial-gradient(closest-side, ${from} 30%, transparent 100%)`, transform: "scale(1.5)" }}
       />
-      <motion.div
-        className="absolute -bottom-24 -left-16 w-72 h-72 rounded-full opacity-40 blur-3xl"
-        style={{ background: to }}
-        animate={{ x: [0, -25, 20, 0], y: [0, 25, -15, 0], scale: [1, 0.85, 1.2, 1] }}
-        transition={{ duration: 16, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+      <div
+        className="absolute -bottom-24 -left-16 w-72 h-72 rounded-full opacity-40"
+        style={{ background: `radial-gradient(closest-side, ${to} 30%, transparent 100%)`, transform: "scale(1.5)" }}
       />
     </div>
   );
@@ -97,22 +61,6 @@ export function Section({ icon: Icon, title, desc, children, badge, isNew, keywo
   const slug = id || normalizeText(title).replace(/\s+/g, "-");
   const palette = useMemo(() => hashPalette(title || slug), [title, slug]);
 
-  // Parallax tilt en hover
-  const mx = useMotionValue(0);
-  const my = useMotionValue(0);
-  const rx = useSpring(useTransform(my, [-0.5, 0.5], [1.5, -1.5]), { stiffness: 150, damping: 25 });
-  const ry = useSpring(useTransform(mx, [-0.5, 0.5], [-1.5, 1.5]), { stiffness: 150, damping: 25 });
-
-  const onMouseMove = (e) => {
-    if (!cardRef.current) return;
-    const r = cardRef.current.getBoundingClientRect();
-    mx.set((e.clientX - r.left) / r.width - 0.5);
-    my.set((e.clientY - r.top) / r.height - 0.5);
-  };
-  const onMouseLeave = () => {
-    mx.set(0); my.set(0); setHovered(false);
-  };
-
   const matched = useMemo(() => {
     if (!searching) return true;
     return matchesSearch(query, `${title} ${desc} ${keywords} ${extractText(children)}`);
@@ -123,23 +71,19 @@ export function Section({ icon: Icon, title, desc, children, badge, isNew, keywo
 
   return (
     <motion.div
-      layout
-      initial={{ opacity: 0, y: 40, scale: 0.94 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ type: "spring", stiffness: 180, damping: 22 }}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
       whileHover={{ y: -1 }}
       style={{ perspective: 1200 }}
       className="relative"
       data-testid={`section-${slug}`}
     >
-      <motion.div
+      <div
         ref={cardRef}
         onMouseEnter={() => setHovered(true)}
-        onMouseLeave={onMouseLeave}
-        onMouseMove={onMouseMove}
+        onMouseLeave={() => setHovered(false)}
         style={{
-          rotateX: rx,
-          rotateY: ry,
           transformStyle: "preserve-3d",
           background: `linear-gradient(135deg, ${palette.from} 0%, ${palette.to} 100%)`,
           boxShadow: hovered
@@ -150,31 +94,6 @@ export function Section({ icon: Icon, title, desc, children, badge, isNew, keywo
       >
         {/* Blobs ambientales */}
         <AmbientBlobs from={palette.from} to={palette.accent + "88"} />
-
-        {/* Sparkles al hover (muy sutil) */}
-        <AnimatePresence>
-          {hovered && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 0.5 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.4 }}
-            >
-              <FloatingSparkles color={palette.accent} />
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Shine sweep — sutil */}
-        <motion.div
-          className="absolute inset-0 pointer-events-none"
-          initial={{ x: "-100%" }}
-          animate={hovered ? { x: "120%" } : { x: "-100%" }}
-          transition={{ duration: 1.6, ease: "easeInOut" }}
-          style={{
-            background: "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.18) 50%, transparent 60%)",
-          }}
-        />
 
         {/* Header clickeable */}
         <div
@@ -189,9 +108,8 @@ export function Section({ icon: Icon, title, desc, children, badge, isNew, keywo
           <div className="flex items-center gap-4 min-w-0 flex-1">
             {/* Icono flotante con órbita */}
             <div className="relative flex-shrink-0">
-              <motion.div
-                animate={{ rotate: [0, 360] }}
-                transition={{ duration: 24, repeat: Infinity, ease: "linear" }}
+              {/* halo de color (quieto; antes giraba sin parar) */}
+              <div
                 className="absolute inset-0 rounded-full"
                 style={{
                   background: `conic-gradient(from 0deg, ${palette.accent}, transparent, ${palette.accent})`,
@@ -221,14 +139,12 @@ export function Section({ icon: Icon, title, desc, children, badge, isNew, keywo
                   {title}
                 </motion.h2>
                 {isNew && (
-                  <motion.span
-                    animate={{ scale: [1, 1.08, 1] }}
-                    transition={{ duration: 1.6, repeat: Infinity }}
+                  <span
                     className="text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider text-white shadow-sm"
                     style={{ background: `linear-gradient(135deg, ${palette.accent}, ${palette.text})` }}
                   >
                     NUEVO
-                  </motion.span>
+                  </span>
                 )}
               </div>
               <p className="text-xs md:text-sm font-semibold mt-1 opacity-70" style={{ color: palette.text }}>
@@ -242,7 +158,7 @@ export function Section({ icon: Icon, title, desc, children, badge, isNew, keywo
             {badge && <div onClick={e => e.stopPropagation()}>{badge}</div>}
             <motion.div
               animate={{ rotate: isOpen ? 180 : 0 }}
-              transition={{ type: "spring", stiffness: 260, damping: 18 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
               className="w-10 h-10 rounded-2xl flex items-center justify-center shadow-md"
               style={{
                 background: "rgba(255,255,255,0.85)",
@@ -254,30 +170,27 @@ export function Section({ icon: Icon, title, desc, children, badge, isNew, keywo
           </div>
         </div>
 
-        {/* Contenido expandido */}
+        {/* Contenido expandido: fundido corto (antes se animaba la altura con un muelle =
+            recalcular el layout de toda la página en cada frame) */}
         <AnimatePresence initial={false}>
           {isOpen && (
             <motion.div
               key="body"
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ height: { type: "spring", stiffness: 200, damping: 26 }, opacity: { duration: 0.25 } }}
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, transition: { duration: 0.12 } }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
               className="overflow-hidden relative z-10"
             >
-              <motion.div
-                initial={{ y: -10 }}
-                animate={{ y: 0 }}
-                exit={{ y: -10 }}
-                transition={{ duration: 0.3 }}
-                className="mx-3 mb-3 rounded-[1.5rem] bg-white/85 backdrop-blur-xl border border-white/70 shadow-inner"
+              <div
+                className="mx-3 mb-3 rounded-[1.5rem] bg-white/85 border border-white/70 shadow-inner"
               >
                 <div className="px-5 py-5">{children}</div>
-              </motion.div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
-      </motion.div>
+      </div>
     </motion.div>
   );
 }
@@ -286,18 +199,18 @@ export function SectionSearchBar({ value, onChange, placeholder, testId }) {
   const [focused, setFocused] = useState(false);
   return (
     <motion.div
-      initial={{ opacity: 0, y: -12 }}
+      initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.15, duration: 0.4 }}
+      transition={{ delay: 0.05, duration: 0.25 }}
       className="relative mb-6"
     >
-      <motion.div
-        animate={{
+      <div
+        style={{
           boxShadow: focused
             ? "0 20px 50px -15px rgba(99,102,241,0.35), 0 8px 25px -10px rgba(0,0,0,0.1)"
             : "0 8px 25px -12px rgba(0,0,0,0.12)",
         }}
-        className="relative rounded-3xl bg-white/70 backdrop-blur-xl border-2 border-white/80 overflow-hidden"
+        className="relative rounded-3xl bg-white/70 border-2 border-white/80 overflow-hidden"
       >
         <motion.div
           animate={focused ? { rotate: [0, 8, -8, 0] } : { rotate: 0 }}
@@ -318,8 +231,9 @@ export function SectionSearchBar({ value, onChange, placeholder, testId }) {
         />
         {value && (
           <motion.button
-            initial={{ scale: 0, rotate: -90 }}
-            animate={{ scale: 1, rotate: 0 }}
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.15 }}
             whileHover={{ scale: 1.15, rotate: 90 }}
             whileTap={{ scale: 0.85 }}
             onClick={() => onChange("")}
@@ -329,7 +243,7 @@ export function SectionSearchBar({ value, onChange, placeholder, testId }) {
             <X size={15} strokeWidth={2.8} />
           </motion.button>
         )}
-      </motion.div>
+      </div>
     </motion.div>
   );
 }

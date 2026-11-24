@@ -138,11 +138,20 @@
     trabajar(pedir("/ubicacion", { ruta: r.trim() }), "Ubicación guardada");
   }
 
+  // Rendimiento: antes se vigilaba TODO el documento (cada cambio de cualquier pantalla
+  // ejecutaba esto). Ahora solo se vigila el contenedor de la tarjeta, y solo en Base de Datos.
+  var vigia = null, padreVigilado = null;
+
+  function dejarDeVigilar() {
+    if (vigia) { vigia.disconnect(); vigia = null; padreVigilado = null; }
+  }
+
   function revisar() {
     var enPagina = location.pathname.indexOf("/base-de-datos") === 0;
     var existe = document.getElementById(ID);
     if (!enPagina) {
       if (timer) { clearInterval(timer); timer = null; }
+      dejarDeVigilar();
       return;
     }
     var ancla = document.querySelector('[data-testid="data-location-card"]');
@@ -152,10 +161,27 @@
       ancla.insertAdjacentElement("afterend", crear());
       refrescar();
     }
-    if (!timer) timer = setInterval(refrescar, 5000);
+    var padre = ancla.parentNode;
+    if (padre && padre !== padreVigilado) {     // si React rehace esa parte, se vuelve a poner al instante
+      dejarDeVigilar();
+      vigia = new MutationObserver(revisar);
+      vigia.observe(padre, { childList: true });
+      padreVigilado = padre;
+    }
+    if (!timer) timer = setInterval(function () {
+      if (document.visibilityState === "visible") refrescar();   // con la ventana oculta, nada
+    }, 5000);
   }
 
-  new MutationObserver(function () { revisar(); }).observe(document.documentElement, { childList: true, subtree: true });
-  window.addEventListener("popstate", revisar);
-  setInterval(revisar, 1500);
+  // cambios de pantalla de la app (React Router usa pushState)
+  ["pushState", "replaceState"].forEach(function (m) {
+    var original = history[m];
+    history[m] = function () {
+      var r = original.apply(this, arguments);
+      setTimeout(revisar, 60);
+      return r;
+    };
+  });
+  window.addEventListener("popstate", function () { setTimeout(revisar, 60); });
+  setInterval(revisar, 1500);                    // respaldo barato (solo compara la ruta)
 })();

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, memo } from "react";
 import { createPortal } from "react-dom";
 import { createReservation, updateReservation, getSocios, getReservations } from "@/lib/api";
 import {
@@ -29,6 +29,69 @@ const PACKAGES = [
   { key: "Completo",   label: "Completo",    icon: Package },
 ];
 
+// ── Rendimiento al escribir ──────────────────────────────────────────────────
+// Con cada tecla se vuelve a dibujar el formulario; estas piezas pesadas van memorizadas
+// (solo se redibujan si cambian SUS datos). Las fotos de socios son base64 grandes: la <img>
+// memorizada no se vuelve a crear ni a decodificar.
+const SocioPhoto = memo(function SocioPhoto({ photo, type, className }) {
+  return <img src={`data:${type};base64,${photo}`} alt="" decoding="async" className={className} />;
+});
+
+const TeamRows = memo(function TeamRows({ team, socios, currencySymbol, updTeam, delTeam }) {
+  return (
+    <AnimatePresence initial={false}>
+      {team.map((m, i) => {
+        const taken = team.filter((x) => x.key !== m.key).map((x) => x.socio_id);
+        const soc = socios.find((x) => x.id === m.socio_id);
+        return (
+          <motion.div key={m.key} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.12 } }}
+            transition={{ duration: 0.18 }}>
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 shrink-0 rounded-xl overflow-hidden grid place-items-center text-[11px] font-black text-white"
+                style={{ background: "linear-gradient(135deg,#8b5cf6,#ec4899)" }}>
+                {soc?.photo && soc?.photo_content_type
+                  ? <SocioPhoto photo={soc.photo} type={soc.photo_content_type} className="w-full h-full object-cover" />
+                  : (soc?.name?.charAt(0).toUpperCase() || <Camera size={14} />)}
+              </div>
+              <div className="relative flex-1 min-w-0">
+                <select value={m.socio_id} onChange={(e) => updTeam(m.key, { socio_id: e.target.value })} data-testid={`team-socio-${i}`}
+                  className="cp-rf-input w-full h-11 appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-500/10">
+                  <option value="">Elegir persona…</option>
+                  {socios.filter((x) => !taken.includes(x.id)).map((x) => <option key={x.id} value={x.id}>{x.name}{x.role ? ` · ${x.role}` : ""}</option>)}
+                </select>
+                <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              </div>
+              <div className="w-28 sm:w-32 flex items-center gap-1 h-11 rounded-xl border border-slate-200 bg-white px-3 cp-rf-input">
+                <span className="text-xs font-black text-slate-400">{currencySymbol}</span>
+                <input type="number" min="0" step="0.01" value={m.payment} onChange={(e) => updTeam(m.key, { payment: e.target.value })}
+                  placeholder="Pago" data-testid={`team-pay-${i}`} className="w-full bg-transparent outline-none text-sm font-bold text-slate-800" />
+              </div>
+              <button type="button" onClick={() => delTeam(m.key)} aria-label="Quitar del equipo"
+                className="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-colors">
+                <Trash2 size={15} />
+              </button>
+            </div>
+          </motion.div>
+        );
+      })}
+    </AnimatePresence>
+  );
+});
+
+// Avatar del selector de socio (antes se definía dentro del componente: era un tipo nuevo
+// en cada render y React volvía a montar todas las fotos)
+const PartnerAvatar = memo(function PartnerAvatar({ s, cls }) {
+  return s.photo && s.photo_content_type
+    ? <SocioPhoto photo={s.photo} type={s.photo_content_type} className={`${cls} rounded-lg object-cover shrink-0`} />
+    : <div className={`${cls} rounded-lg grid place-items-center shrink-0 text-[10px] font-black text-white`} style={{ background: "linear-gradient(135deg,#8b5cf6,#ec4899)" }}>{s.name?.charAt(0).toUpperCase()}</div>;
+});
+
+// Versiones memorizadas de los campos pesados (las funciones están más abajo)
+const MemoEventTypeSlider = memo(EventTypeSlider);
+const MemoClientAutocomplete = memo(ClientAutocomplete);
+const MemoRDateField = memo(RDateField);
+const MemoRTimeField = memo(RTimeField);
+
 export default function ReservationForm({ reservation, onClose, onSaved }) {
   const { toast } = useToast();
   const { tr, activeStatuses, formFieldsVisibility, currencySymbol, formatCurrency, currencyInfo, animations } = useSettings();
@@ -37,15 +100,18 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
   const isEdit = !!reservation;
 
   // Renders the active currency symbol styled like a lucide icon (Q, $, €, L…)
-  const CurrencyGlyph = ({ size = 16, className = "" }) => (
-    <span
-      className={className}
-      aria-hidden="true"
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.95), fontWeight: 900, lineHeight: 1, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-    >
-      {currencySymbol}
-    </span>
-  );
+  // (memorizado: antes era un componente nuevo en cada tecla y se volvía a montar)
+  const CurrencyGlyph = useMemo(() => function CurrencyGlyph({ size = 16, className = "" }) {
+    return (
+      <span
+        className={className}
+        aria-hidden="true"
+        style={{ width: size, height: size, fontSize: Math.round(size * 0.95), fontWeight: 900, lineHeight: 1, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+      >
+        {currencySymbol}
+      </span>
+    );
+  }, [currencySymbol]);
 
   const [form, setForm] = useState({
     client_name: "", client_phone: "", client_email: "",
@@ -63,9 +129,9 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
   const [socios, setSocios] = useState([]);
   // Equipo (varios socios con su pago) y lugares extra
   const [team, setTeam] = useState([]);
-  const addTeam = () => setTeam((t) => [...t, { key: Date.now() + Math.random(), socio_id: "", payment: "" }]);
-  const updTeam = (key, patch) => setTeam((t) => t.map((m) => (m.key === key ? { ...m, ...patch } : m)));
-  const delTeam = (key) => setTeam((t) => t.filter((m) => m.key !== key));
+  const addTeam = useCallback(() => setTeam((t) => [...t, { key: Date.now() + Math.random(), socio_id: "", payment: "" }]), []);
+  const updTeam = useCallback((key, patch) => setTeam((t) => t.map((m) => (m.key === key ? { ...m, ...patch } : m))), []);
+  const delTeam = useCallback((key) => setTeam((t) => t.filter((m) => m.key !== key)), []);
   const [locs, setLocs] = useState({ maquillaje: "", ceremonia: "", fiesta: "" });
   const [showLocs, setShowLocs] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -162,6 +228,14 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
   }, [reservation]);
 
   const set = (field) => (e) => setForm(p => ({ ...p, [field]: e.target.value }));
+  // Rendimiento al escribir: callbacks estables para que los campos pesados memorizados
+  // (selector de tipo, calendario, hora, autocompletar, equipo con fotos) no se vuelvan a
+  // dibujar con cada tecla de otro campo.
+  const onEventType = useCallback((k) => setForm((p) => ({ ...p, event_type: k })), []);
+  const onClientName = useCallback((v) => setForm((p) => ({ ...p, client_name: v })), []);
+  const onPickClient = useCallback((c) => setForm((p) => ({ ...p, client_name: c.name, client_phone: p.client_phone || c.phone, client_email: p.client_email || c.email })), []);
+  const onEventDate = useCallback((v) => setForm((p) => ({ ...p, event_date: v })), []);
+  const onEventTime = useCallback((v) => setForm((p) => ({ ...p, event_time: v })), []);
   // Al cambiar el monto total: si la reserva está marcada como "Pagado",
   // mantener el anticipo sincronizado con el total (pago completo real).
   const setTotal = (e) => {
@@ -449,7 +523,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
 
               <AnimatePresence>
                 {draftOffer && (
-                  <motion.div key="draft" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                  <motion.div key="draft" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.12 } }} transition={{ duration: 0.18 }}
                     className="overflow-hidden" data-testid="draft-banner">
                     <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3">
                       <RotateCcw size={16} className="text-violet-600 shrink-0" />
@@ -467,7 +541,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
 
               <motion.div variants={ITEM}>
                 <RLabel>{noReq(f.eventType) || "Tipo de evento"}</RLabel>
-                <EventTypeSlider value={form.event_type} onChange={(k) => setForm((p) => ({ ...p, event_type: k }))} />
+                <MemoEventTypeSlider value={form.event_type} onChange={onEventType} />
                 <select value={form.event_type} onChange={set("event_type")} data-testid="input-event-type" className="hidden">
                   {EVENT_TYPES.map((t) => <option key={t.key} value={t.key}>{getEventTypeName(t.key)}</option>)}
                 </select>
@@ -475,9 +549,9 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <RField label={noReq(f.clientName)} req dirty={isDirtyField("client_name")} testId="field-client-name" error={errOn("client_name")} shake={shake}>
-                  <ClientAutocomplete value={form.client_name} clients={clients}
-                    onChange={(v) => setForm((p) => ({ ...p, client_name: v }))}
-                    onPick={(c) => setForm((p) => ({ ...p, client_name: c.name, client_phone: p.client_phone || c.phone, client_email: p.client_email || c.email }))} />
+                  <MemoClientAutocomplete value={form.client_name} clients={clients}
+                    onChange={onClientName}
+                    onPick={onPickClient} />
                   <AnimatePresence>
                     {clientHist.length > 0 && (
                       <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} data-testid="frequent-client"
@@ -493,12 +567,12 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                   </RField>
                 )}
                 <RField label={noReq(f.eventDate)} req dirty={isDirtyField("event_date")} testId="field-date" error={errOn("event_date")} shake={shake}>
-                  <RDateField value={form.event_date} busy={busy} onChange={(v) => setForm((p) => ({ ...p, event_date: v }))} />
+                  <MemoRDateField value={form.event_date} busy={busy} onChange={onEventDate} />
                   <input type="date" value={form.event_date} onChange={set("event_date")} required data-testid="input-event-date" className="hidden" />
                 </RField>
                 {ff.time !== false && (
                   <RField label={f.time} dirty={isDirtyField("event_time")} testId="field-time">
-                    <RTimeField value={form.event_time} onChange={(v) => setForm((p) => ({ ...p, event_time: v }))} />
+                    <MemoRTimeField value={form.event_time} onChange={onEventTime} />
                     <input type="time" value={form.event_time} onChange={set("event_time")} data-testid="input-event-time" className="hidden" />
                   </RField>
                 )}
@@ -557,42 +631,8 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                     {teamCost > 0 && <span className="text-[11px] font-bold text-slate-500 mb-1.5 tabular-nums">Total equipo {formatCurrency(teamCost)}</span>}
                   </div>
                   <div className="space-y-2">
-                    <AnimatePresence initial={false}>
-                      {team.map((m, i) => {
-                        const taken = team.filter((x) => x.key !== m.key).map((x) => x.socio_id);
-                        const soc = socios.find((x) => x.id === m.socio_id);
-                        return (
-                          <motion.div key={m.key} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                            transition={{ duration: 0.22 }} className="overflow-hidden">
-                            <div className="flex items-center gap-2">
-                              <div className="w-9 h-9 shrink-0 rounded-xl overflow-hidden grid place-items-center text-[11px] font-black text-white"
-                                style={{ background: "linear-gradient(135deg,#8b5cf6,#ec4899)" }}>
-                                {soc?.photo && soc?.photo_content_type
-                                  ? <img src={`data:${soc.photo_content_type};base64,${soc.photo}`} alt="" className="w-full h-full object-cover" />
-                                  : (soc?.name?.charAt(0).toUpperCase() || <Camera size={14} />)}
-                              </div>
-                              <div className="relative flex-1 min-w-0">
-                                <select value={m.socio_id} onChange={(e) => updTeam(m.key, { socio_id: e.target.value })} data-testid={`team-socio-${i}`}
-                                  className="cp-rf-input w-full h-11 appearance-none rounded-xl border border-slate-200 bg-white pl-3 pr-8 text-sm text-slate-800 outline-none focus:border-violet-400 focus:ring-4 focus:ring-violet-500/10">
-                                  <option value="">Elegir persona…</option>
-                                  {socios.filter((x) => !taken.includes(x.id)).map((x) => <option key={x.id} value={x.id}>{x.name}{x.role ? ` · ${x.role}` : ""}</option>)}
-                                </select>
-                                <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                              </div>
-                              <div className="w-28 sm:w-32 flex items-center gap-1 h-11 rounded-xl border border-slate-200 bg-white px-3 cp-rf-input">
-                                <span className="text-xs font-black text-slate-400">{currencySymbol}</span>
-                                <input type="number" min="0" step="0.01" value={m.payment} onChange={(e) => updTeam(m.key, { payment: e.target.value })}
-                                  placeholder="Pago" data-testid={`team-pay-${i}`} className="w-full bg-transparent outline-none text-sm font-bold text-slate-800" />
-                              </div>
-                              <button type="button" onClick={() => delTeam(m.key)} aria-label="Quitar del equipo"
-                                className="w-9 h-9 shrink-0 rounded-full grid place-items-center text-slate-400 hover:bg-rose-50 hover:text-rose-500 transition-colors">
-                                <Trash2 size={15} />
-                              </button>
-                            </div>
-                          </motion.div>
-                        );
-                      })}
-                    </AnimatePresence>
+                    {/* lista memorizada: escribir en otros campos no vuelve a dibujar las fotos (base64) */}
+                    <TeamRows team={team} socios={socios} currencySymbol={currencySymbol} updTeam={updTeam} delTeam={delTeam} />
                     {socios.length === 0 ? (
                       <p className="text-xs text-slate-400">Aún no tienes socios. Agrégalos en la sección Socios para asignarlos aquí.</p>
                     ) : team.length < socios.length && (
@@ -632,7 +672,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
                   </RField>
                   <AnimatePresence>
                     {totalNum > 0 && advNum > totalNum && (
-                      <motion.p initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                      <motion.p initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.12 } }} transition={{ duration: 0.18 }}
                         className="mt-1 text-[11px] font-bold text-rose-500" data-testid="advance-too-high">El anticipo es mayor que el total</motion.p>
                     )}
                   </AnimatePresence>
@@ -684,7 +724,7 @@ export default function ReservationForm({ reservation, onClose, onSaved }) {
               {/* Ganancia después de pagar al equipo */}
               <AnimatePresence>
                 {teamCost > 0 && totalNum > 0 && (
-                  <motion.div initial={{ opacity: 0, y: 8, height: 0 }} animate={{ opacity: 1, y: 0, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                  <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, transition: { duration: 0.12 } }} transition={{ duration: 0.2 }}
                     className="overflow-hidden" data-testid="profit-card">
                     <div className="rounded-2xl bg-white border border-slate-200 px-4 py-3 text-sm">
                       <div className="flex justify-between text-slate-500"><span>Pagos al equipo</span><span className="tabular-nums">− {formatCurrency(teamCost)}</span></div>
@@ -1326,9 +1366,7 @@ function PartnerPickerField({ socios, value, onChange, payment, onPaymentChange,
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
-  const Avatar = ({ s, cls }) => (s.photo && s.photo_content_type
-    ? <img src={`data:${s.photo_content_type};base64,${s.photo}`} alt="" className={`${cls} rounded-lg object-cover shrink-0`} />
-    : <div className={`${cls} rounded-lg grid place-items-center shrink-0 text-[10px] font-black text-white`} style={{ background: "linear-gradient(135deg,#8b5cf6,#ec4899)" }}>{s.name?.charAt(0).toUpperCase()}</div>);
+  const Avatar = PartnerAvatar;
   return (
     <div className="relative" data-testid="field-partner" ref={ref}>
       <RLabel>Fotógrafo / socio</RLabel>

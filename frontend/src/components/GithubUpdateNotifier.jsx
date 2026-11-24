@@ -11,7 +11,7 @@ import { checkGithubUpdates, applyGithubUpdate, waitBackendReady, hardReloadAfte
 import { useToast } from "@/hooks/use-toast";
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
-const INITIAL_DELAY_MS = 1200;
+const INITIAL_DELAY_MS = 6000;   // después del arranque, para no competir con la carga de datos
 const DISMISSED_KEY = "gh_update_dismissed_sha";
 
 function relativeTime(iso) {
@@ -114,9 +114,13 @@ export default function GithubUpdateNotifier() {
       if (intervalRef.current) clearInterval(intervalRef.current);
       return undefined;
     }
-    const initial = setTimeout(() => runCheck({ silent: true }), INITIAL_DELAY_MS);
-    intervalRef.current = setInterval(() => runCheck({ silent: true }), POLL_INTERVAL_MS);
-    const onFocus = () => runCheck({ silent: true });
+    // Rendimiento: no se consulta con la ventana oculta, y al volver a la ventana como
+    // mucho una vez cada 2 min (antes: una petición a GitHub en cada cambio de foco).
+    let lastCheck = 0;
+    const check = () => { lastCheck = Date.now(); runCheck({ silent: true }); };
+    const initial = setTimeout(check, INITIAL_DELAY_MS);
+    intervalRef.current = setInterval(() => { if (!document.hidden) check(); }, POLL_INTERVAL_MS);
+    const onFocus = () => { if (Date.now() - lastCheck > 2 * 60 * 1000) check(); };
     window.addEventListener("focus", onFocus);
     return () => {
       clearTimeout(initial);
@@ -288,10 +292,10 @@ export default function GithubUpdateNotifier() {
           <motion.div
             key="gh-update-pill"
             data-testid="github-update-pill"
-            initial={{ opacity: 0, y: 30, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 30, scale: 0.9 }}
-            transition={{ type: "spring", damping: 22, stiffness: 260 }}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 12, transition: { duration: 0.15 } }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
             className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 pl-3 pr-2 py-2 rounded-full text-white text-sm font-semibold shadow-2xl"
             style={{
               background: "linear-gradient(90deg, #6d28d9 0%, #4f46e5 60%, #0ea5e9 100%)",
@@ -304,14 +308,10 @@ export default function GithubUpdateNotifier() {
               onClick={() => setShowModal(true)}
               className="flex items-center gap-2.5 hover:scale-[1.02] active:scale-[0.98] transition-transform"
             >
-              <motion.span
-                className="relative flex items-center justify-center w-7 h-7 rounded-full bg-white/20"
-                animate={{ rotate: [0, 15, -15, 0] }}
-                transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
-              >
+              <span className="relative flex items-center justify-center w-7 h-7 rounded-full bg-white/20">
                 <Sparkles size={14} />
                 <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white animate-pulse" />
-              </motion.span>
+              </span>
               <span className="flex flex-col items-start leading-tight">
                 <span className="text-[10px] uppercase tracking-wider opacity-80">Nueva versión</span>
                 <span className="text-xs font-bold">v{version}</span>
@@ -346,10 +346,10 @@ export default function GithubUpdateNotifier() {
             <motion.div
               key="gh-update-modal"
               data-testid="github-update-modal"
-              initial={{ opacity: 0, y: 40, scale: 0.95 }}
+              initial={{ opacity: 0, y: 12, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 40, scale: 0.95 }}
-              transition={{ type: "spring", damping: 24, stiffness: 260 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96, transition: { duration: 0.15 } }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
               className="relative w-full max-w-md rounded-3xl overflow-hidden bg-white shadow-2xl"
               style={{ boxShadow: "0 30px 80px rgba(15,23,42,0.35), 0 8px 24px rgba(15,23,42,0.15)" }}
             >
@@ -373,7 +373,7 @@ export default function GithubUpdateNotifier() {
                 <div className="absolute inset-0 opacity-30 pointer-events-none"
                   style={{ background: "radial-gradient(circle at 20% 10%, rgba(255,255,255,0.4) 0%, transparent 50%)" }} />
                 <div className="relative flex flex-col items-center">
-                  <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center backdrop-blur-sm mb-3">
+                  <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center mb-3">
                     <Package size={22} />
                   </div>
                   <p className="text-[11px] uppercase tracking-[0.2em] font-bold opacity-85">Nueva versión disponible</p>
@@ -416,10 +416,10 @@ export default function GithubUpdateNotifier() {
                   {expanded && (
                     <motion.div
                       key="details"
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.25 }}
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, transition: { duration: 0.12 } }}
+                      transition={{ duration: 0.2 }}
                       className="overflow-hidden"
                     >
                       <div className="mt-2 max-h-[220px] overflow-y-auto pr-1">
@@ -479,12 +479,9 @@ export default function GithubUpdateNotifier() {
                           <span data-testid="github-update-progress-percent" className="tabular-nums">{progress.percent || 0}%</span>
                         </div>
                         <div className="h-2.5 w-full rounded-full bg-slate-200 overflow-hidden">
-                          <motion.div
+                          <div
                             className="h-full rounded-full"
-                            style={{ background: "linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)" }}
-                            initial={{ width: 0 }}
-                            animate={{ width: `${progress.percent || 0}%` }}
-                            transition={{ ease: "easeOut", duration: 0.3 }}
+                            style={{ background: "linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%)", width: `${progress.percent || 0}%` }}
                           />
                         </div>
                         <p className="mt-1.5 text-[11px] text-slate-400 text-center">
