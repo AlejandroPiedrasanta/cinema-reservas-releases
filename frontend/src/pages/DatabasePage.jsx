@@ -2814,7 +2814,8 @@ export default function DatabasePage() {
         </motion.div>
 
         {/* ── ZONA DE PELIGRO (rediseño editorial) ── */}
-        <motion.div variants={fadeUp} style={{ display: advancedMode ? undefined : "none" }} data-testid="db-advanced-block-danger">
+        {/* «Zona de peligro» quitada de la vista */}
+        <motion.div variants={fadeUp} style={{ display: "none" }} data-testid="db-advanced-block-danger">
           <div className="relative rounded-[28px] overflow-hidden border border-red-200 bg-white">
             {/* franja de advertencia */}
             <div className="absolute top-0 left-0 right-0 h-1"

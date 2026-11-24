@@ -35,6 +35,16 @@ from typing import Optional
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 
+try:                                    # sincronización con «Comprobantes Cinema Productions»
+    import sync_comprobantes
+except ImportError:
+    sync_comprobantes = None
+
+
+def _avisar_comprobantes():
+    if sync_comprobantes is not None:
+        sync_comprobantes.avisar()
+
 # ROOT_DIR: dónde vive el módulo (para .env, cinema_data.json, backups, etc.)
 ROOT_DIR = Path(__file__).parent
 
@@ -500,8 +510,16 @@ async def lifespan(app_instance: FastAPI):
     # ── Copia de seguridad automática diaria (en la carpeta de datosackups) ─
     asyncio.create_task(_daily_auto_backup())
 
+    # ── Sincronización con el programa Comprobantes (si está instalado) ─────
+    _sync_task = None
+    if sync_comprobantes is not None:
+        sync_comprobantes.configurar(DATA_DIR)
+        _sync_task = asyncio.create_task(sync_comprobantes.bucle(lambda: db, _save_embedded_data))
+
     yield
     _rem_task.cancel()
+    if _sync_task:
+        _sync_task.cancel()
     if _using_embedded:
         if _task:
             _task.cancel()
@@ -827,6 +845,7 @@ async def create_reservation(reservation: ReservationCreate):
     doc.pop("_id", None)
     if _using_embedded:
         asyncio.create_task(_save_embedded_data())
+    _avisar_comprobantes()
     return doc
 
 
@@ -870,6 +889,7 @@ async def update_reservation(reservation_id: str, reservation: ReservationUpdate
     doc = await db.reservations.find_one({"_id": oid})
     if _using_embedded:
         asyncio.create_task(_save_embedded_data())
+    _avisar_comprobantes()
     return doc_to_dict(doc)
 
 
@@ -884,7 +904,85 @@ async def delete_reservation(reservation_id: str):
         raise HTTPException(status_code=404, detail="Reserva no encontrada")
     if _using_embedded:
         asyncio.create_task(_save_embedded_data())
+    _avisar_comprobantes()
     return {"message": "Reserva eliminada"}
+
+
+# ─── Comprobantes (programa de comprobantes del estudio) ──────────────────────
+# Panel en Base de Datos: comprobantes_ui.js (se inyecta en index.html).
+
+def _estado_comprobantes(extra=None):
+    if sync_comprobantes is None:
+        return {"disponible": False}
+    s = dict(sync_comprobantes.estado)
+    s["ruta"] = str(sync_comprobantes.ruta_historial())
+    s["encontrado"] = sync_comprobantes.ruta_historial().is_file()
+    s.update(extra or {})
+    return {"disponible": True, **s}
+
+
+def _sin_comprobantes():
+    if sync_comprobantes is None:
+        raise HTTPException(status_code=404, detail="Sincronización con Comprobantes no disponible")
+
+
+@api_router.get("/comprobantes/sync")
+async def comprobantes_sync_status():
+    """Estado de la sincronización con el programa Comprobantes."""
+    return _estado_comprobantes()
+
+
+@api_router.post("/comprobantes/conectar")
+async def comprobantes_conectar():
+    _sin_comprobantes()
+    await sync_comprobantes.conectar(db, True)
+    await _save_embedded_data()
+    return _estado_comprobantes()
+
+
+@api_router.post("/comprobantes/desconectar")
+async def comprobantes_desconectar():
+    _sin_comprobantes()
+    await sync_comprobantes.conectar(db, False)
+    return _estado_comprobantes()
+
+
+@api_router.post("/comprobantes/resincronizar")
+async def comprobantes_resincronizar():
+    _sin_comprobantes()
+    r = await sync_comprobantes.resincronizar(db)
+    await _save_embedded_data()
+    return _estado_comprobantes({"hechos": r.get("hechos", 0)})
+
+
+@api_router.post("/comprobantes/ahora")
+async def comprobantes_ahora():
+    """Lo llama Comprobantes al guardar un comprobante: sincroniza en seguida."""
+    _sin_comprobantes()
+    sync_comprobantes.avisar()
+    return {"ok": True}
+
+
+@api_router.post("/comprobantes/ubicacion")
+async def comprobantes_ubicacion(body: dict):
+    _sin_comprobantes()
+    try:
+        sync_comprobantes.elegir_ruta((body or {}).get("ruta") or None)
+    except OSError as e:
+        raise HTTPException(status_code=400, detail=f"No se pudo guardar la ubicación: {e}")
+    await sync_comprobantes.sincronizar(db)
+    await _save_embedded_data()
+    return _estado_comprobantes()
+
+
+@api_router.get("/comprobantes/ui.js")
+async def comprobantes_ui_js():
+    for d in (BUNDLE_DIR, ROOT_DIR):
+        f = d / "comprobantes_ui.js"
+        if f.is_file():
+            return FileResponse(str(f), media_type="application/javascript",
+                                headers={"Cache-Control": "no-cache"})
+    return Response("", media_type="application/javascript")
 
 
 @api_router.post("/reservations/{reservation_id}/receipts")
@@ -6628,8 +6726,9 @@ def _inject_local_url(html: str) -> str:
         flags=_re.DOTALL,
     )
 
-    # Inyectar URL local
-    return html.replace("</head>", _LOCAL_INJECT + "</head>", 1)
+    # Inyectar URL local (+ panel «Conectar con Comprobantes» de Base de Datos)
+    extra = '<script src="/api/comprobantes/ui.js" defer></script>' if sync_comprobantes is not None else ""
+    return html.replace("</head>", _LOCAL_INJECT + extra + "</head>", 1)
 
 
 def _resolve_build_dir() -> Optional[Path]:
